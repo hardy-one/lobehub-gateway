@@ -195,6 +195,19 @@ func TestWebSocketResumeCompleteSkippedWhenStatusMissing(t *testing.T) {
 	wsExpectNoMessage(t, ws, 200*time.Millisecond)
 }
 
+func TestWebSocketWaitsForOperationInitBeforeAuthenticating(t *testing.T) {
+	_, ts := testServer()
+	defer ts.Close()
+	ws := dialWebSocket(t, ts.URL, "/ws?operationId=op-pending-init")
+	defer ws.close()
+	ws.writeJSON(t, map[string]any{"type": "auth", "token": "service-token"})
+	wsExpectNoMessage(t, ws, 50*time.Millisecond)
+	postJSON(t, ts.URL+"/api/operations/init", map[string]any{"operationId": "op-pending-init", "userId": "user-1"}, http.StatusOK)
+	if msg := ws.readJSON(t); msg["type"] != "auth_success" {
+		t.Fatalf("expected auth_success after init, got %+v", msg)
+	}
+}
+
 func TestForwardToolResultPreservesStateAndOmitsAbsentOptionalFields(t *testing.T) {
 	var received map[string]any
 	callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
