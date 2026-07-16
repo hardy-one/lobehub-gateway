@@ -195,6 +195,38 @@ func TestWebSocketResumeCompleteSkippedWhenStatusMissing(t *testing.T) {
 	wsExpectNoMessage(t, ws, 200*time.Millisecond)
 }
 
+func TestForwardToolResultPreservesStateAndOmitsAbsentOptionalFields(t *testing.T) {
+	var received map[string]any
+	callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer callback.Close()
+
+	srv := NewServer(Config{LobeAPIBaseURL: callback.URL, ServiceToken: "service-token"})
+	op := newOperation(srv, "op-tool-result")
+	op.forwardToolResult(toolResultMessage{
+		Content:    ptr("done"),
+		State:      json.RawMessage(`{"cursor":2}`),
+		Success:    true,
+		ToolCallID: "tool-1",
+	})
+
+	if received["content"] != "done" || received["success"] != true || received["toolCallId"] != "tool-1" {
+		t.Fatalf("unexpected tool-result body: %+v", received)
+	}
+	if _, ok := received["error"]; ok {
+		t.Fatalf("error must be omitted when absent: %+v", received)
+	}
+	if state, ok := received["state"].(map[string]any); !ok || state["cursor"] != float64(2) {
+		t.Fatalf("state was not forwarded: %+v", received)
+	}
+}
+
+func ptr(value string) *string { return &value }
+
 func TestWebSocketJWTClaimValidation(t *testing.T) {
 	jwks, signJWT := testJWTSigner(t)
 	srv := NewServer(Config{JWKSPublicKey: jwks, LobeAPIBaseURL: "http://127.0.0.1:1", ServiceToken: "service-token"})
