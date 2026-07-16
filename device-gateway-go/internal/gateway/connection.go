@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"time"
 )
@@ -94,6 +95,10 @@ func (c *connection) readLoop(auth *authResolver, heartbeatTimeout time.Duration
 				err = errUserIDMismatch
 			}
 			if err != nil {
+				if errors.Is(err, errTokenExpired) {
+					_ = c.writeJSON(map[string]string{"type": "auth_expired"})
+					return
+				}
 				reason := err.Error()
 				_ = c.writeJSON(map[string]string{"reason": reason, "type": "auth_failed"})
 				c.close(wsClosePolicy, reason)
