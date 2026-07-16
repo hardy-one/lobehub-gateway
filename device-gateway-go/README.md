@@ -16,7 +16,8 @@ The original Cloudflare Worker Device Gateway remains the reference implementati
 ## Endpoints
 
 - `GET /health` returns `OK`
-- `GET /ws?userId=&deviceId=&connectionId=&channel=&hostname=&platform=` upgrades a device WebSocket
+- `GET /ws?userId=&deviceId=&connectionId=&channel=&hostname=&platform=` upgrades a personal device WebSocket
+- `GET /ws?workspaceId=&deviceId=&connectionId=&channel=&hostname=&platform=` upgrades a workspace device WebSocket
 - `POST /api/device/status`
 - `POST /api/device/devices`
 - `POST /api/device/message-api`
@@ -26,7 +27,9 @@ The original Cloudflare Worker Device Gateway remains the reference implementati
 - `POST /api/device/rpc`
 - `POST /api/device/agent/run`
 
-All `/api/device/*` endpoints require `Authorization: Bearer <SERVICE_TOKEN>` and a JSON body containing `userId`. Device WebSockets also require `userId`; JWT authentication must match that user. Workspace device pools and workspace JWT routing are not supported. Additional `workspaceId` fields do not change device routing.
+All `/api/device/*` endpoints require `Authorization: Bearer <SERVICE_TOKEN>` and a JSON body containing `userId`. Personal Device WebSockets also require `userId`, and JWT authentication must match that user. A workspace-scoped request additionally carries `workspaceId` and is routed to that workspace's device pool.
+
+Workspace WebSockets require the short-lived JWT minted by LobeHub for device enrollment. The gateway verifies its RS256 signature (selecting the JWKS key by `kid`) and requires `purpose: workspace-device-connect`, matching `workspace_id`, and a matching subject. API keys, service tokens, and personal JWTs cannot authenticate a workspace socket.
 
 Tool calls keep one request ID across reconnects, bind to the initially selected device and connection, and allow at most three retransmissions after the first attempt. A call waits for its execution timeout (default 30 seconds, minimum 5 seconds) plus a 45-second recovery window. If no delivery succeeds it returns `503 DEVICE_OFFLINE`; a delivered call without a result returns `504 TIMEOUT`.
 

@@ -204,7 +204,7 @@ func TestWebSocketAuthTimeoutAndConnectionIDReplacement(t *testing.T) {
 }
 
 func TestWebSocketJWTClaimValidation(t *testing.T) {
-	jwks, signJWT := testJWTSigner(t)
+	jwks, signJWT, signClaims := testJWTSigner(t)
 	srv := NewServer(Config{JWKSPublicKey: jwks, ServiceToken: "service-token"})
 	srv.authTimeout = time.Second
 	httpSrv := httptest.NewServer(srv.Routes())
@@ -232,6 +232,18 @@ func TestWebSocketJWTClaimValidation(t *testing.T) {
 	}
 	if code, reason := notYetActive.readClose(t); code != wsClosePolicy || reason != `"nbf" claim timestamp check failed` {
 		t.Fatalf("unexpected nbf jwt close: %d %q", code, reason)
+	}
+
+	workspace := dialTestWS(t, httpSrv.URL, "/ws?workspaceId=ws-1&deviceId=d-ws")
+	defer workspace.close()
+	workspace.sendJSON(t, map[string]any{"type": "auth", "token": signClaims(map[string]any{"purpose": "workspace-device-connect", "workspace_id": "ws-1", "sub": "ws-1"}), "tokenType": "jwt"})
+	assertWSJSON(t, workspace, map[string]any{"type": "auth_success"})
+
+	wrongWorkspace := dialTestWS(t, httpSrv.URL, "/ws?workspaceId=ws-2&deviceId=d-ws")
+	defer wrongWorkspace.close()
+	wrongWorkspace.sendJSON(t, map[string]any{"type": "auth", "token": signClaims(map[string]any{"purpose": "workspace-device-connect", "workspace_id": "ws-1", "sub": "ws-1"}), "tokenType": "jwt"})
+	if msg := wrongWorkspace.readJSON(t); msg["type"] != "auth_failed" {
+		t.Fatalf("expected workspace auth failure, got %#v", msg)
 	}
 }
 
@@ -309,7 +321,7 @@ func TestAgentRunForwardsAllOptionalFields(t *testing.T) {
 	done := make(chan map[string]any, 1)
 	go func() {
 		res := postJSON(t, httpSrv.URL+"/api/device/agent/run", "service-token",
-			`{"userId":"u1","deviceId":"d1","operationId":"op-1","agentType":"codex","args":["--model","gpt-5.6-luna"],"imageList":[{"id":"img-1","url":"https://example.com/image.png"}],"assistantMessageId":"asst-1","ingestWorkspaceId":"ws-1","resumeFallbackSystemContext":"fallback ctx","workspaceId":"ws-1","jwt":"jwt-1","prompt":"run","topicId":"topic-1","cwd":"/repo","resumeSessionId":"sess-1","systemContext":"repo rules","timeout":1000}`)
+			`{"userId":"u1","deviceId":"d1","operationId":"op-1","agentType":"codex","args":["--model","gpt-5.6-luna"],"imageList":[{"id":"img-1","url":"https://example.com/image.png"}],"assistantMessageId":"asst-1","ingestWorkspaceId":"ws-1","resumeFallbackSystemContext":"fallback ctx","jwt":"jwt-1","prompt":"run","topicId":"topic-1","cwd":"/repo","resumeSessionId":"sess-1","systemContext":"repo rules","timeout":1000}`)
 		assertStatus(t, res, http.StatusOK)
 		var body map[string]any
 		decodeJSON(t, res, &body)
@@ -348,9 +360,6 @@ func TestAgentRunForwardsAllOptionalFields(t *testing.T) {
 	}
 	if request["resumeFallbackSystemContext"] != "fallback ctx" {
 		t.Fatalf("unexpected resumeFallbackSystemContext: %#v", request["resumeFallbackSystemContext"])
-	}
-	if request["workspaceId"] != "ws-1" {
-		t.Fatalf("unexpected workspaceId: %#v", request["workspaceId"])
 	}
 	if request["systemContext"] != "repo rules" {
 		t.Fatalf("unexpected systemContext: %#v", request["systemContext"])
@@ -602,7 +611,7 @@ func base64Std(value []byte) string {
 	return out.String()
 }
 
-func testJWTSigner(t *testing.T) (string, func(string, time.Time, time.Time) string) {
+func testJWTSigner(t *testing.T) (string, func(string, time.Time, time.Time) string, func(map[string]any) string) {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -612,6 +621,7 @@ func testJWTSigner(t *testing.T) (string, func(string, time.Time, time.Time) str
 	jwksBody := map[string]any{
 		"keys": []map[string]string{{
 			"alg": "RS256",
+			"kid": "test-key",
 			"e":   base64.RawURLEncoding.EncodeToString(exponent),
 			"kty": "RSA",
 			"n":   base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes()),
@@ -622,18 +632,13 @@ func testJWTSigner(t *testing.T) (string, func(string, time.Time, time.Time) str
 		t.Fatal(err)
 	}
 
-	return string(jwks), func(sub string, exp time.Time, nbf time.Time) string {
+	signClaims := func(claims map[string]any) string {
 		t.Helper()
-		header, err := json.Marshal(map[string]any{"alg": "RS256", "typ": "JWT"})
+		header, err := json.Marshal(map[string]any{"alg": "RS256", "kid": "test-key", "typ": "JWT"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		payload, err := json.Marshal(map[string]any{
-			"exp": exp.Unix(),
-			"iat": time.Now().Unix(),
-			"nbf": nbf.Unix(),
-			"sub": sub,
-		})
+		payload, err := json.Marshal(claims)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -645,6 +650,14 @@ func testJWTSigner(t *testing.T) (string, func(string, time.Time, time.Time) str
 		}
 		return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig)
 	}
+	return string(jwks), func(sub string, exp time.Time, nbf time.Time) string {
+			return signClaims(map[string]any{"exp": exp.Unix(), "iat": time.Now().Unix(), "nbf": nbf.Unix(), "sub": sub})
+		}, func(claims map[string]any) string {
+			claims["exp"] = time.Now().Add(time.Minute).Unix()
+			claims["iat"] = time.Now().Unix()
+			claims["nbf"] = time.Now().Add(-time.Minute).Unix()
+			return signClaims(claims)
+		}
 }
 
 func (w *testWS) sendJSON(t *testing.T, value any) {
