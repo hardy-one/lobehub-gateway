@@ -37,7 +37,7 @@ The original Cloudflare Worker Agent Gateway remains the reference implementatio
 - `POST /api/operations/llm-close`
 - `GET /api/operations/status?operationId={operationId}`
 
-All `/api/operations/*` endpoints require `Authorization: Bearer <SERVICE_TOKEN>`. The `/ws` endpoint authenticates via the first WebSocket message, which carries either a JWT signed by the LobeHub Server (verified against `JWKS_PUBLIC_KEY`) or the shared service token.
+All `/api/operations/*` endpoints require `Authorization: Bearer <SERVICE_TOKEN>`. The `/ws` endpoint authenticates via the first WebSocket message, which carries either a JWT signed by the LobeHub Server (verified against `JWKS_PUBLIC_KEY`) or the shared service token. A socket that authenticates with the shared service token before `/api/operations/init` has established the operation owner remains pending and receives no events; it is authenticated only after init as the initialized `userId`.
 
 Protocol v2 authenticates during the `/v2/ws` upgrade. `token` is required; `tokenType` defaults to `jwt` and may be `apiKey` when `serverUrl` is also supplied. Authentication failures complete the WebSocket upgrade and immediately close it with code `4401` and reason `auth_expired` or `auth_failed`, allowing browser clients to distinguish refreshable credentials. A successful connection receives:
 

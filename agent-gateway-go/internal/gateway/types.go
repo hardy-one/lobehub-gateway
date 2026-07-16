@@ -31,6 +31,7 @@ type clientAttachment struct {
 	IsAdmin       bool
 	LastHeartbeat int64
 	PendingOwner  bool
+	PendingUserID string
 	UserID        string
 }
 
