@@ -219,11 +219,8 @@ func TestWebSocketJWTClaimValidation(t *testing.T) {
 	defer expired.close()
 	expired.sendJSON(t, map[string]any{"type": "auth", "token": signJWT("jwt-user", time.Now().Add(-time.Minute), time.Now().Add(-2*time.Minute)), "tokenType": "jwt"})
 	msg := expired.readJSON(t)
-	if msg["type"] != "auth_failed" || msg["reason"] != `"exp" claim timestamp check failed` {
-		t.Fatalf("expected expired jwt auth_failed, got %#v", msg)
-	}
-	if code, reason := expired.readClose(t); code != wsClosePolicy || reason != `"exp" claim timestamp check failed` {
-		t.Fatalf("unexpected expired jwt close: %d %q", code, reason)
+	if msg["type"] != "auth_expired" {
+		t.Fatalf("expected expired jwt auth_expired, got %#v", msg)
 	}
 
 	notYetActive := dialTestWS(t, httpSrv.URL, "/ws?userId=jwt-user")
@@ -408,6 +405,33 @@ func TestAgentRunPreservesEmptyValues(t *testing.T) {
 	}
 	ws.sendJSON(t, map[string]any{"operationId": "op-2", "status": "accepted", "type": "agent_run_ack"})
 	<-done
+}
+
+func TestAgentRunRejectedUsesProtocolEnvelope(t *testing.T) {
+	srv := NewServer(Config{ServiceToken: "service-token"})
+	srv.authTimeout = time.Second
+	httpSrv := httptest.NewServer(srv.Routes())
+	defer httpSrv.Close()
+
+	ws := dialTestWS(t, httpSrv.URL, "/ws?userId=u1&deviceId=d1&connectionId=conn-1")
+	defer ws.close()
+	ws.sendJSON(t, map[string]any{"type": "auth", "token": "service-token"})
+	assertWSJSON(t, ws, map[string]any{"type": "auth_success"})
+
+	done := make(chan map[string]any, 1)
+	go func() {
+		res := postJSON(t, httpSrv.URL+"/api/device/agent/run", "service-token", `{"userId":"u1","deviceId":"d1","operationId":"op-rejected","agentType":"claude-code","jwt":"jwt-1","prompt":"run","topicId":"topic-1"}`)
+		assertStatus(t, res, http.StatusOK)
+		var body map[string]any
+		decodeJSON(t, res, &body)
+		done <- body
+	}()
+
+	request := ws.readJSON(t)
+	ws.sendJSON(t, map[string]any{"operationId": request["operationId"], "reason": "busy", "status": "rejected", "type": "agent_run_ack"})
+	if body := <-done; body["success"] != false || body["status"] != "rejected" || body["reason"] != "busy" {
+		t.Fatalf("unexpected rejected agent-run response: %#v", body)
+	}
 }
 
 func TestConnectionIDChannelCoexistenceAndPriority(t *testing.T) {
