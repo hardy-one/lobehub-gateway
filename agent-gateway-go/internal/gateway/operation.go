@@ -31,6 +31,7 @@ type queuedHubEvent struct {
 	isToolExecute bool
 	payload       json.RawMessage
 }
+const pendingServiceTokenUser = "\x00service-token"
 
 type pendingConfirmation struct {
 	ch    chan bool
@@ -99,6 +100,7 @@ func (o *operation) init(operationID string, userID string, meta *operationMeta)
 	}
 	o.mu.Unlock()
 	for _, conn := range connections {
+		conn.bindOperationUser(userID)
 		conn.verifyPendingOwner(userID)
 	}
 	o.server.notifyLifecycle(o, StatusRunning, "")
@@ -653,6 +655,7 @@ func (c *operationConnection) markAuthenticated(userID string, isAdmin bool, pen
 	c.att.LastHeartbeat = time.Now().UnixMilli()
 	c.att.PendingOwner = pendingOwner
 	c.att.UserID = userID
+	c.att.PendingUserID = ""
 	c.mu.Unlock()
 }
 
@@ -665,6 +668,30 @@ func (o *operation) authenticateConnection(c *operationConnection, userID string
 	}
 	c.markAuthenticated(userID, false, storedUserID == "")
 	return nil
+}
+
+func (c *operationConnection) pendingUserID() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.att.PendingUserID
+}
+
+func (c *operationConnection) setPendingUserID(userID string) {
+	c.mu.Lock()
+	c.att.PendingUserID = userID
+	c.mu.Unlock()
+}
+
+func (c *operationConnection) bindOperationUser(userID string) {
+	if c.pendingUserID() != pendingServiceTokenUser || c.isAuthenticated() {
+		return
+	}
+	if c.authTimer != nil {
+		c.authTimer.Stop()
+	}
+	c.markAuthenticated(userID, false, false)
+	_ = c.writeJSON(map[string]string{"type": "auth_success"})
+	c.startHeartbeatTimer(c.operation.server.heartbeatTimeout)
 }
 
 func (c *operationConnection) recordHeartbeat() {
@@ -759,6 +786,13 @@ func (c *operationConnection) handleAuth(payload []byte) {
 		return
 	}
 	storedUserID := c.operation.storedUserID()
+	if storedUserID == "" && msg.Token == c.operation.server.cfg.ServiceToken {
+		c.setPendingUserID(pendingServiceTokenUser)
+		if boundUserID := c.operation.storedUserID(); boundUserID != "" {
+			c.bindOperationUser(boundUserID)
+		}
+		return
+	}
 	verifiedUserID, err := c.operation.server.auth.resolve(context.Background(), storedUserID, msg)
 	if err == nil {
 		err = c.operation.authenticateConnection(c, verifiedUserID)
