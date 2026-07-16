@@ -11,6 +11,8 @@ type DeviceAttachment struct {
 	Hostname      string `json:"hostname"`
 	LastHeartbeat int64  `json:"lastHeartbeat"`
 	Platform      string `json:"platform"`
+	UserID        string `json:"userId,omitempty"`
+	WorkspaceID   string `json:"workspaceId,omitempty"`
 }
 
 type DeviceConnection struct {
@@ -62,6 +64,7 @@ type deviceHTTPBody struct {
 	ToolCall        json.RawMessage  `json:"toolCall,omitempty"`
 	TopicID         string           `json:"topicId,omitempty"`
 	UserID          string           `json:"userId"`
+	WorkspaceID     string           `json:"workspaceId,omitempty"`
 
 	// rawPayload preserves the original HTTP request body so handlers that need
 	// verbatim forwarding (e.g. agent run) can mirror the upstream TypeScript
