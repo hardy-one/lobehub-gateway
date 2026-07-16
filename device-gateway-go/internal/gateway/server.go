@@ -64,6 +64,13 @@ func (s *Server) hub(userID string) *hub {
 	return h
 }
 
+func hubKeyFromBody(body deviceHTTPBody) string {
+	if body.WorkspaceID != "" {
+		return "workspace:" + body.WorkspaceID
+	}
+	return body.UserID
+}
+
 func (s *Server) withServiceAuth(next func(http.ResponseWriter, *http.Request, deviceHTTPBody)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.ServiceToken == "" || r.Header.Get("Authorization") != "Bearer "+s.cfg.ServiceToken {
@@ -94,8 +101,13 @@ func (s *Server) withServiceAuth(next func(http.ResponseWriter, *http.Request, d
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("userId")
-	if userID == "" {
-		writeText(w, http.StatusBadRequest, "Missing userId")
+	workspaceID := r.URL.Query().Get("workspaceId")
+	hubKey := userID
+	if workspaceID != "" {
+		hubKey = "workspace:" + workspaceID
+	}
+	if hubKey == "" {
+		writeText(w, http.StatusBadRequest, "Missing userId or workspaceId")
 		return
 	}
 
@@ -105,7 +117,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UnixMilli()
-	h := s.hub(userID)
+	h := s.hub(hubKey)
 	conn := &connection{
 		att: DeviceAttachment{
 			Authenticated: false,
@@ -116,6 +128,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			Hostname:      r.URL.Query().Get("hostname"),
 			LastHeartbeat: now,
 			Platform:      r.URL.Query().Get("platform"),
+			UserID:        userID,
+			WorkspaceID:   workspaceID,
 		},
 		authTimeout: s.authTimeout,
 		hub:         h,
@@ -168,16 +182,17 @@ func (s *Server) handleDeviceAPI(w http.ResponseWriter, r *http.Request, body de
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request, body deviceHTTPBody) {
-	connections := s.hub(body.UserID).authenticatedConnections()
-	writeJSON(w, http.StatusOK, map[string]any{"deviceCount": s.hub(body.UserID).deviceCount(), "online": len(connections) > 0})
+	h := s.hub(hubKeyFromBody(body))
+	connections := h.authenticatedConnections()
+	writeJSON(w, http.StatusOK, map[string]any{"deviceCount": h.deviceCount(), "online": len(connections) > 0})
 }
 
 func (s *Server) handleDevices(w http.ResponseWriter, _ *http.Request, body deviceHTTPBody) {
-	writeJSON(w, http.StatusOK, map[string]any{"devices": s.hub(body.UserID).devices()})
+	writeJSON(w, http.StatusOK, map[string]any{"devices": s.hub(hubKeyFromBody(body)).devices()})
 }
 
 func (s *Server) handleToolCall(w http.ResponseWriter, _ *http.Request, body deviceHTTPBody) {
-	h := s.hub(body.UserID)
+	h := s.hub(hubKeyFromBody(body))
 	if len(h.authenticatedConnections()) == 0 {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"content": "桌面设备不在线", "error": "DEVICE_OFFLINE", "success": false})
 		return
@@ -212,7 +227,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, _ *http.Request, body dev
 }
 
 func (s *Server) handleSystemInfo(w http.ResponseWriter, _ *http.Request, body deviceHTTPBody) {
-	h := s.hub(body.UserID)
+	h := s.hub(hubKeyFromBody(body))
 	if len(h.authenticatedConnections()) == 0 {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "DEVICE_OFFLINE", "success": false})
 		return
@@ -241,7 +256,7 @@ func (s *Server) handleRPC(w http.ResponseWriter, _ *http.Request, body deviceHT
 		writeText(w, http.StatusBadRequest, "Missing method")
 		return
 	}
-	h := s.hub(body.UserID)
+	h := s.hub(hubKeyFromBody(body))
 	if len(h.authenticatedConnections()) == 0 {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "DEVICE_OFFLINE", "success": false})
 		return
@@ -276,7 +291,7 @@ func (s *Server) handleRPC(w http.ResponseWriter, _ *http.Request, body deviceHT
 }
 
 func (s *Server) handleMessageAPI(w http.ResponseWriter, _ *http.Request, body deviceHTTPBody) {
-	h := s.hub(body.UserID)
+	h := s.hub(hubKeyFromBody(body))
 	if len(h.authenticatedConnections()) == 0 {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"content": "桌面设备不在线", "error": "DEVICE_OFFLINE", "success": false})
 		return
@@ -313,7 +328,7 @@ func (s *Server) handleAgentRun(w http.ResponseWriter, _ *http.Request, body dev
 		writeText(w, http.StatusBadRequest, "Missing operationId")
 		return
 	}
-	h := s.hub(body.UserID)
+	h := s.hub(hubKeyFromBody(body))
 	if len(h.authenticatedConnections()) == 0 {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "DEVICE_OFFLINE", "success": false})
 		return

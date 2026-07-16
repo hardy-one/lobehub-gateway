@@ -16,7 +16,8 @@ The original Cloudflare Worker Device Gateway remains the reference implementati
 ## Endpoints
 
 - `GET /health` returns `OK`
-- `GET /ws?userId=&deviceId=&connectionId=&channel=&hostname=&platform=` upgrades a device WebSocket
+- `GET /ws?userId=&deviceId=&connectionId=&channel=&hostname=&platform=` upgrades a personal device WebSocket
+- `GET /ws?workspaceId=&deviceId=&connectionId=&channel=&hostname=&platform=` upgrades a workspace device WebSocket
 - `POST /api/device/status`
 - `POST /api/device/devices`
 - `POST /api/device/message-api`
@@ -25,7 +26,9 @@ The original Cloudflare Worker Device Gateway remains the reference implementati
 - `POST /api/device/rpc`
 - `POST /api/device/agent/run`
 
-All `/api/device/*` endpoints require `Authorization: Bearer <SERVICE_TOKEN>` and a JSON body containing `userId`.
+All `/api/device/*` endpoints require `Authorization: Bearer <SERVICE_TOKEN>` and a JSON body containing `userId`. A workspace-scoped request additionally carries `workspaceId` and is routed to that workspace's device pool.
+
+Workspace WebSockets require the short-lived JWT minted by LobeHub for device enrollment. The gateway verifies its RS256 signature (selecting the JWKS key by `kid`) and requires `purpose: workspace-device-connect`, matching `workspace_id`, and a matching subject. API keys, service tokens, and personal JWTs cannot authenticate a workspace socket.
 
 ## Configuration
 
