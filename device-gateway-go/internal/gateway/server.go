@@ -341,13 +341,18 @@ func (s *Server) handleAgentRun(w http.ResponseWriter, _ *http.Request, body dev
 		writeText(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if len(body.Args) > 0 {
+		msg["args"] = body.Args
+	}
+	if len(body.ImageList) > 0 {
+		msg["imageList"] = body.ImageList
+	}
 
 	result, status := h.dispatch(target, key, timeout, msg)
 	switch status {
 	case dispatchOK:
 		if result.Status == "rejected" {
-			errorText := defaultString(result.Reason, "DEVICE_REJECTED")
-			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": errorText, "success": false})
+			writeJSON(w, http.StatusOK, map[string]any{"reason": result.Reason, "status": "rejected", "success": false})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"success": true})
