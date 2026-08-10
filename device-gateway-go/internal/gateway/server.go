@@ -50,7 +50,7 @@ func (s *Server) Routes() http.Handler {
 	})
 	mux.HandleFunc("GET /ws", s.handleWebSocket)
 	mux.HandleFunc("/api/device/", s.withServiceAuth(s.handleDeviceAPI))
-	return mux
+	return logRequests(mux)
 }
 
 func (s *Server) hub(userID string) *hub {
