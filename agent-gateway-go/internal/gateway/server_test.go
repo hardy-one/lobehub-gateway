@@ -44,6 +44,19 @@ func TestHealth(t *testing.T) {
 	}
 }
 
+func TestConfigRequestLoggingDefaultsToFalse(t *testing.T) {
+	t.Setenv("REQUEST_LOG_ENABLED", "")
+	if cfg := ConfigFromEnv(); cfg.RequestLogging {
+		t.Fatal("expected REQUEST_LOG_ENABLED to default to false")
+	}
+}
+
+func TestConfigRequestLoggingFromEnv(t *testing.T) {
+	t.Setenv("REQUEST_LOG_ENABLED", "true")
+	if cfg := ConfigFromEnv(); !cfg.RequestLogging {
+		t.Fatal("expected REQUEST_LOG_ENABLED=true to enable request logging")
+	}
+}
 func TestOperationsAuthAndStatus(t *testing.T) {
 	_, ts := testServer()
 	defer ts.Close()

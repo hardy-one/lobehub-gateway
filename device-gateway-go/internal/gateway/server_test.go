@@ -39,6 +39,20 @@ func TestConfigRequiresServiceTokenAndRejectsEmptyBearer(t *testing.T) {
 	assertBody(t, res, "Unauthorized")
 }
 
+func TestConfigRequestLoggingDefaultsToFalse(t *testing.T) {
+	t.Setenv("REQUEST_LOG_ENABLED", "")
+	if cfg := ConfigFromEnv(); cfg.RequestLogging {
+		t.Fatal("expected REQUEST_LOG_ENABLED to default to false")
+	}
+}
+
+func TestConfigRequestLoggingFromEnv(t *testing.T) {
+	t.Setenv("REQUEST_LOG_ENABLED", "true")
+	if cfg := ConfigFromEnv(); !cfg.RequestLogging {
+		t.Fatal("expected REQUEST_LOG_ENABLED=true to enable request logging")
+	}
+}
+
 func TestHTTPAuthAndOfflineResponses(t *testing.T) {
 	srv := NewServer(Config{ServiceToken: "service-token"})
 	httpSrv := httptest.NewServer(srv.Routes())
