@@ -3,6 +3,7 @@ package gateway
 import (
 	"errors"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -10,6 +11,7 @@ type Config struct {
 	JWKSPublicKey   string
 	Port            string
 	ReadTimeout     time.Duration
+	RequestLogging  bool
 	ServiceToken    string
 	ShutdownTimeout time.Duration
 	WriteTimeout    time.Duration
@@ -27,6 +29,7 @@ func ConfigFromEnv() Config {
 		JWKSPublicKey:   os.Getenv("JWKS_PUBLIC_KEY"),
 		Port:            envOrDefault("PORT", "8787"),
 		ReadTimeout:     durationEnvOrDefault("READ_TIMEOUT", 30*time.Second),
+		RequestLogging:  boolEnvOrDefault("REQUEST_LOG_ENABLED", false),
 		ServiceToken:    os.Getenv("SERVICE_TOKEN"),
 		ShutdownTimeout: durationEnvOrDefault("SHUTDOWN_TIMEOUT", 10*time.Second),
 		WriteTimeout:    durationEnvOrDefault("WRITE_TIMEOUT", time.Minute),
@@ -46,6 +49,18 @@ func durationEnvOrDefault(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func boolEnvOrDefault(key string, fallback bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
 	if err != nil {
 		return fallback
 	}

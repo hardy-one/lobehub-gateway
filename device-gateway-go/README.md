@@ -39,6 +39,7 @@ Workspace WebSockets require the short-lived JWT minted by LobeHub for device en
 | `JWKS_PUBLIC_KEY` | empty | JWKS JSON containing an RS256 public key for JWT WebSocket auth. |
 | `READ_TIMEOUT` | `30s` | Go HTTP server read timeout. |
 | `WRITE_TIMEOUT` | `1m` | Go HTTP server write timeout. |
+| `REQUEST_LOG_ENABLED` | `false` | Enable one structured log line per HTTP request. |
 | `SHUTDOWN_TIMEOUT` | `10s` | Graceful shutdown timeout. |
 
 Protocol-level timeouts intentionally match the Worker implementation: devices must authenticate within 10 seconds and send heartbeats at least every 90 seconds.

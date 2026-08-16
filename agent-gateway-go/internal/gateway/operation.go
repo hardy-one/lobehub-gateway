@@ -31,6 +31,7 @@ type queuedHubEvent struct {
 	isToolExecute bool
 	payload       json.RawMessage
 }
+
 const pendingServiceTokenUser = "\x00service-token"
 
 type pendingConfirmation struct {

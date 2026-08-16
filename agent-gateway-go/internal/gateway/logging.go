@@ -101,13 +101,20 @@ func newRequestID() string {
 }
 
 // logRequests emits one structured log line per received request with the
-// source address, client details, route, outcome, and timing.
-func logRequests(next http.Handler) http.Handler {
+// source address, client details, route, outcome, and timing when enabled.
+// It always sets X-Request-Id so callers can correlate responses even when
+// request logging is disabled.
+func logRequests(next http.Handler, enabled bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
 		requestID := newRequestID()
 		w.Header().Set("X-Request-Id", requestID)
 
+		if !enabled {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w}
 		next.ServeHTTP(rec, r)
 
