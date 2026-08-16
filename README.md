@@ -87,6 +87,7 @@ Each sub-project remains an independent Go module and can be built/tested on its
 | `DEVICE_PORT` | `8788` | Device only | Device gateway listen port |
 | `READ_TIMEOUT` | `30s` | Yes | HTTP read timeout |
 | `WRITE_TIMEOUT` | `1m` | Yes | HTTP write timeout |
+| `REQUEST_LOG_ENABLED` | `false` | Yes | Enable per-request structured HTTP access logging |
 | `SHUTDOWN_TIMEOUT` | `10s` | Yes | Graceful shutdown timeout |
 
 The unified binary does not read `PORT`; each service's port is controlled only by `AGENT_PORT` / `DEVICE_PORT`. The standalone binaries keep using `PORT` (default 8787) as before.
@@ -122,7 +123,7 @@ Or start the provided Compose service:
 SERVICE_TOKEN=your-token docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-The Compose file uses the unified binary's default listener ports and forwards `SERVICE_TOKEN`, `JWKS_PUBLIC_KEY`, and `LOBE_API_BASE_URL`. To use custom listener ports or timeout values, add the corresponding variables from the table above to the Compose service's `environment` section and update its `ports` mappings when changing `AGENT_PORT` or `DEVICE_PORT`.
+The Compose file uses the unified binary's default listener ports and forwards `SERVICE_TOKEN`, `JWKS_PUBLIC_KEY`, `LOBE_API_BASE_URL`, and `REQUEST_LOG_ENABLED`. To use custom listener ports or timeout values, add the corresponding variables from the table above to the Compose service's `environment` section and update its `ports` mappings when changing `AGENT_PORT` or `DEVICE_PORT`.
 
 The CD workflow publishes a multi-architecture image for linux/amd64 and linux/arm64. By default it is published as `ghcr.io/lobehub/lobehub-gateway:<version>`; repository maintainers can override the destination with the `DOCKER_IMAGE` Actions secret. Stable releases selected as the default version also publish the `latest` tag.
 

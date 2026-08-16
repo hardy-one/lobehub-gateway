@@ -87,6 +87,7 @@ lobehub-gateway-go/
 | `DEVICE_PORT` | `8788` | 仅 Device | Device 网关监听端口 |
 | `READ_TIMEOUT` | `30s` | 是 | HTTP 读取超时 |
 | `WRITE_TIMEOUT` | `1m` | 是 | HTTP 写入超时 |
+| `REQUEST_LOG_ENABLED` | `false` | 是 | 是否输出每个 HTTP 请求的结构化访问日志 |
 | `SHUTDOWN_TIMEOUT` | `10s` | 是 | 优雅关闭超时 |
 
 统一二进制不读取 `PORT`；各服务端口只由 `AGENT_PORT` / `DEVICE_PORT` 控制。独立二进制仍像以前一样使用 `PORT`（默认 8787）。
@@ -122,7 +123,7 @@ docker run --rm \
 SERVICE_TOKEN=your-token docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-Compose 文件使用统一二进制的默认监听端口，并透传 `SERVICE_TOKEN`、`JWKS_PUBLIC_KEY` 和 `LOBE_API_BASE_URL`。如需使用自定义监听端口或超时，请在 Compose 服务的 `environment` 中添加上表对应变量；修改 `AGENT_PORT` 或 `DEVICE_PORT` 时还需同步更新 `ports` 映射。
+Compose 文件使用统一二进制的默认监听端口，并透传 `SERVICE_TOKEN`、`JWKS_PUBLIC_KEY`、`LOBE_API_BASE_URL` 和 `REQUEST_LOG_ENABLED`。如需使用自定义监听端口或超时，请在 Compose 服务的 `environment` 中添加上表对应变量；修改 `AGENT_PORT` 或 `DEVICE_PORT` 时还需同步更新 `ports` 映射。
 
 CD 工作流会发布 linux/amd64 和 linux/arm64 多架构镜像。默认地址为 `ghcr.io/lobehub/lobehub-gateway:<version>`；仓库维护者可以通过 Actions secret `DOCKER_IMAGE` 覆盖目标地址。被选为默认版本的稳定 Release 还会发布 `latest` 标签。
 
