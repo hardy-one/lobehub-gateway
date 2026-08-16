@@ -54,7 +54,7 @@ func (s *Server) Routes() http.Handler {
 		writeText(w, http.StatusNotFound, "404 page not found")
 	})
 	mux.HandleFunc("/api/operations/", s.handleOperations)
-	return logRequests(mux)
+	return logRequests(mux, s.cfg.RequestLogging)
 }
 
 func (s *Server) getOrCreateOperation(operationID string) *operation {

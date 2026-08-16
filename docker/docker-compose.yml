@@ -11,4 +11,5 @@ services:
       SERVICE_TOKEN: ${SERVICE_TOKEN:?SERVICE_TOKEN is required}
       JWKS_PUBLIC_KEY: ${JWKS_PUBLIC_KEY:-}
       LOBE_API_BASE_URL: ${LOBE_API_BASE_URL:-}
+      REQUEST_LOG_ENABLED: ${REQUEST_LOG_ENABLED:-}
     restart: unless-stopped

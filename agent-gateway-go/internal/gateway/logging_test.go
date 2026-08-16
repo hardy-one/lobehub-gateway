@@ -71,7 +71,7 @@ func waitForLog(t *testing.T, logs *syncBuffer, wants ...string) {
 }
 
 func testAgentServer() *httptest.Server {
-	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: "http://127.0.0.1:1"})
+	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: "http://127.0.0.1:1", RequestLogging: true})
 	return httptest.NewServer(srv.Routes())
 }
 
@@ -176,4 +176,30 @@ func TestRequestLoggingFailure(t *testing.T) {
 		`"status":401`,
 		`"success":false`,
 	)
+}
+
+func TestRequestLoggingDisabledByDefault(t *testing.T) {
+	logs, restore := withCapturedLogs(t)
+	defer restore()
+
+	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: "http://127.0.0.1:1"})
+	ts := httptest.NewServer(srv.Routes())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.Header.Get("X-Request-Id") == "" {
+		t.Error("expected X-Request-Id response header even when logging disabled")
+	}
+
+	// The logging middleware is opt-in; no request log should be emitted when
+	// RequestLogging is false.
+	time.Sleep(50 * time.Millisecond)
+	if out := logs.String(); strings.Contains(out, `"msg":"request"`) {
+		t.Fatalf("request log emitted while logging disabled\noutput:\n%s", out)
+	}
 }
