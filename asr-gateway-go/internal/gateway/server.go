@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -60,7 +61,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	setCORSHeaders(w)
 
 	sessionID := generateUUID()
-	token := generateHex(16)
+	token := generateMockJWT(sessionID)
 
 	s.sessionMu.Lock()
 	s.sessions[sessionID] = sessionInfo{
@@ -253,9 +254,14 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 						"sampleRate":      16000,
 					},
 					"limits": map[string]any{
-						"maxBufferedFrames": 5,
-						"maxFrames":         300,
-						"maxSessionMs":      60000,
+						"audioIdleTimeoutMs":       5000,
+						"authTimeoutMs":            5000,
+						"finalTimeoutMs":           5000,
+						"maxBufferedFrames":        5,
+						"maxFrames":                300,
+						"maxSessionMs":             60000,
+						"providerConnectTimeoutMs": 5000,
+						"tokenTtlMs":               30000,
 					},
 				}))
 			} else if msg.Type == "session.end" {
@@ -321,4 +327,17 @@ func generateHex(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+func generateMockJWT(sessionID string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256"}`))
+	payloadObj := map[string]any{
+		"sub":       "asr-user",
+		"sessionId": sessionID,
+		"exp":       time.Now().Add(1 * time.Hour).Unix(),
+	}
+	payloadBytes, _ := json.Marshal(payloadObj)
+	payload := base64.RawURLEncoding.EncodeToString(payloadBytes)
+	sig := generateHex(32)
+	return fmt.Sprintf("%s.%s.%s", header, payload, sig)
 }
