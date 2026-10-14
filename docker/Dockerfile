@@ -1,6 +1,6 @@
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
 COPY agent-gateway-go/ ./agent-gateway-go/
 COPY asr-gateway-go/ ./asr-gateway-go/
 COPY device-gateway-go/ ./device-gateway-go/
