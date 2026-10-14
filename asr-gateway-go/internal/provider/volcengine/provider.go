@@ -10,9 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lobehub/lobehub/apps/asr-gateway-go/internal/provider"
@@ -29,8 +31,10 @@ const (
 	msgAudioOnly         = 0b0010
 	msgFullServerResp    = 0b1001
 
-	flagNoSequence = 0b0000
-	flagLastPacket = 0b0010
+	flagNoSequence       = 0b0000
+	flagPosSequence      = 0b0001
+	flagLastPacket       = 0b0010
+	flagNegWithSequence  = 0b0011
 
 	serializationJSON = 0b0001
 	serializationNone = 0b0000
@@ -53,6 +57,7 @@ type VolcengineProvider struct {
 	errorsCh  chan error
 	closeOnce sync.Once
 	closed    chan struct{}
+	seq       int32
 }
 
 func NewVolcengineProvider(cfg Config) *VolcengineProvider {
@@ -67,6 +72,7 @@ func NewVolcengineProvider(cfg Config) *VolcengineProvider {
 		eventsCh: make(chan provider.TranscriptEvent, 32),
 		errorsCh: make(chan error, 1),
 		closed:   make(chan struct{}),
+		seq:      1,
 	}
 }
 
@@ -174,7 +180,7 @@ func (p *VolcengineProvider) sendInitialPayload() error {
 			"uid": "lobe-user",
 		},
 		"audio": map[string]any{
-			"format":  "raw",
+			"format":  "pcm",
 			"codec":   "raw",
 			"rate":    16000,
 			"bits":    16,
@@ -185,8 +191,8 @@ func (p *VolcengineProvider) sendInitialPayload() error {
 			"enable_itn":       true,
 			"enable_punc":      true,
 			"enable_ddc":       true,
-			"show_utterances":  true,
-			"enable_nonstream": false, // Realtime streaming mode
+			"show_utterances":  false, // 专为输入听写设计，关闭复杂分句分离
+			"enable_nonstream": false, // 实时流式优先
 			"result_type":      "full",
 		},
 	}
@@ -205,14 +211,19 @@ func (p *VolcengineProvider) sendInitialPayload() error {
 		return err
 	}
 
-	hdr := buildHeader(msgFullClientRequest, flagNoSequence, serializationJSON, compressionGzip)
+	hdr := buildHeader(msgFullClientRequest, flagPosSequence, serializationJSON, compressionGzip)
 	payloadBytes := gzipped.Bytes()
+
+	seqBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(seqBuf, uint32(atomic.LoadInt32(&p.seq)))
+
 	lenBuf := make([]byte, 4)
 	binary.BigEndian.PutUint32(lenBuf, uint32(len(payloadBytes)))
 
 	p.writeMu.Lock()
 	defer p.writeMu.Unlock()
-	packet := append(hdr, lenBuf...)
+	packet := append(hdr, seqBuf...)
+	packet = append(packet, lenBuf...)
 	packet = append(packet, payloadBytes...)
 
 	return p.writeRawWSBinary(packet)
@@ -225,26 +236,48 @@ func (p *VolcengineProvider) SendAudio(pcmChunk []byte) error {
 	default:
 	}
 
-	hdr := buildHeader(msgAudioOnly, flagNoSequence, serializationNone, compressionNone)
-	lenBuf := make([]byte, 4)
-	binary.BigEndian.PutUint32(lenBuf, uint32(len(pcmChunk)))
+	curSeq := atomic.AddInt32(&p.seq, 1)
 
-	packet := append(hdr, lenBuf...)
-	packet = append(packet, pcmChunk...)
+	var gzipped bytes.Buffer
+	gw := gzip.NewWriter(&gzipped)
+	if _, err := gw.Write(pcmChunk); err != nil {
+		return err
+	}
+	if err := gw.Close(); err != nil {
+		return err
+	}
+	payloadBytes := gzipped.Bytes()
+
+	hdr := buildHeader(msgAudioOnly, flagPosSequence, serializationNone, compressionGzip)
+	seqBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(seqBuf, uint32(curSeq))
+
+	lenBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(lenBuf, uint32(len(payloadBytes)))
 
 	p.writeMu.Lock()
 	defer p.writeMu.Unlock()
+	packet := append(hdr, seqBuf...)
+	packet = append(packet, lenBuf...)
+	packet = append(packet, payloadBytes...)
+
 	return p.writeRawWSBinary(packet)
 }
 
 func (p *VolcengineProvider) EndSession() error {
-	hdr := buildHeader(msgAudioOnly, flagLastPacket, serializationNone, compressionNone)
-	lenBuf := make([]byte, 4) // length = 0
+	curSeq := atomic.AddInt32(&p.seq, 1)
 
-	packet := append(hdr, lenBuf...)
+	hdr := buildHeader(msgAudioOnly, flagNegWithSequence, serializationNone, compressionNone)
+	seqBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(seqBuf, uint32(-curSeq))
+
+	lenBuf := make([]byte, 4) // length = 0
 
 	p.writeMu.Lock()
 	defer p.writeMu.Unlock()
+	packet := append(hdr, seqBuf...)
+	packet = append(packet, lenBuf...)
+
 	return p.writeRawWSBinary(packet)
 }
 
@@ -354,26 +387,20 @@ func (p *VolcengineProvider) readLoop() {
 
 			var resp struct {
 				Code       int `json:"code"`
+				Error      string `json:"error"`
 				PayloadMsg struct {
 					Result struct {
-						Text       string `json:"text"`
-						Utterances []struct {
-							Definite bool   `json:"definite"`
-							Text     string `json:"text"`
-						} `json:"utterances"`
+						Text string `json:"text"`
 					} `json:"result"`
 				} `json:"payload_msg"`
 				Result struct {
-					Text       string `json:"text"`
-					Utterances []struct {
-						Definite bool   `json:"definite"`
-						Text     string `json:"text"`
-					} `json:"utterances"`
+					Text string `json:"text"`
 				} `json:"result"`
 			}
 
 			if err := json.Unmarshal(body, &resp); err == nil {
-				if resp.Code != 0 {
+				if resp.Code != 0 || resp.Error != "" {
+					slog.Warn("volcengine returned error", "code", resp.Code, "error", resp.Error)
 					continue
 				}
 
@@ -382,21 +409,11 @@ func (p *VolcengineProvider) readLoop() {
 					text = resp.Result.Text
 				}
 
-				utterances := resp.PayloadMsg.Result.Utterances
-				if len(utterances) == 0 {
-					utterances = resp.Result.Utterances
-				}
-
-				isFinal := false
-				if len(utterances) > 0 {
-					isFinal = utterances[len(utterances)-1].Definite
-				}
-
 				if text != "" {
 					p.eventsCh <- provider.TranscriptEvent{
-						SegmentID: fmt.Sprintf("seg_%d", len(utterances)),
+						SegmentID: "seg_dictation",
 						Text:      text,
-						IsFinal:   isFinal,
+						IsFinal:   false,
 					}
 				}
 			}
