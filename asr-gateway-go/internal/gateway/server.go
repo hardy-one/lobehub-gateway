@@ -24,6 +24,7 @@ type sessionInfo struct {
 
 type Server struct {
 	cfg       Config
+	auth      *authResolver
 	sessions  map[string]sessionInfo
 	sessionMu sync.RWMutex
 }
@@ -31,6 +32,7 @@ type Server struct {
 func NewServer(cfg Config) *Server {
 	return &Server{
 		cfg:      cfg,
+		auth:     newAuthResolver(cfg),
 		sessions: make(map[string]sessionInfo),
 	}
 }
@@ -111,10 +113,12 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.sessionMu.RLock()
-	session, exists := s.sessions[sessionID]
+	localSession, hasLocalSession := s.sessions[sessionID]
 	s.sessionMu.RUnlock()
 
-	if !exists {
+	// If no local session was created on this instance (e.g. distributed gateway),
+	// check if JWKS_PUBLIC_KEY or SERVICE_TOKEN is configured to allow remote validation
+	if !hasLocalSession && s.cfg.JWKSPublicKey == "" && s.cfg.ServiceToken == "" {
 		http.Error(w, "invalid or expired session", http.StatusUnauthorized)
 		return
 	}
@@ -204,7 +208,14 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if msg.Type == "session.auth" {
-				if msg.Token != session.token {
+				authenticated := false
+				if hasLocalSession && msg.Token == localSession.token {
+					authenticated = true
+				} else if _, err := s.auth.resolve(msg.Token); err == nil {
+					authenticated = true
+				}
+
+				if !authenticated {
 					_ = clientConn.writeJSON(mustMarshal(map[string]any{
 						"sessionId": sessionID,
 						"sequence":  nextSeq(),

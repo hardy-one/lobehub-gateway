@@ -8,10 +8,12 @@ import (
 )
 
 type Config struct {
+	JWKSPublicKey   string
 	Port            string
 	Provider        string // e.g. "volcengine" (default)
 	ReadTimeout     time.Duration
 	RequestLogging  bool
+	ServiceToken    string
 	ShutdownTimeout time.Duration
 	WriteTimeout    time.Duration
 
@@ -35,10 +37,12 @@ func (c Config) Validate() error {
 
 func ConfigFromEnv() Config {
 	return Config{
+		JWKSPublicKey:        os.Getenv("JWKS_PUBLIC_KEY"),
 		Port:                 envOrDefault("ASR_PORT", "8789"),
 		Provider:             envOrDefault("ASR_PROVIDER", "volcengine"),
 		ReadTimeout:          durationEnvOrDefault("READ_TIMEOUT", 30*time.Second),
 		RequestLogging:       boolEnvOrDefault("REQUEST_LOG_ENABLED", false),
+		ServiceToken:         os.Getenv("SERVICE_TOKEN"),
 		ShutdownTimeout:      durationEnvOrDefault("SHUTDOWN_TIMEOUT", 10*time.Second),
 		WriteTimeout:         durationEnvOrDefault("WRITE_TIMEOUT", time.Minute),
 		VolcengineAPIKey:     os.Getenv("VOLCENGINE_VOICE_API_KEY"),
