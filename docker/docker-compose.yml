@@ -7,9 +7,13 @@ services:
     ports:
       - "8787:8787"
       - "8788:8788"
+      - "8789:8789"
     environment:
       SERVICE_TOKEN: ${SERVICE_TOKEN:?SERVICE_TOKEN is required}
       JWKS_PUBLIC_KEY: ${JWKS_PUBLIC_KEY:-}
       LOBE_API_BASE_URL: ${LOBE_API_BASE_URL:-}
       REQUEST_LOG_ENABLED: ${REQUEST_LOG_ENABLED:-}
+      ASR_PROVIDER: ${ASR_PROVIDER:-volcengine}
+      VOLCENGINE_VOICE_API_KEY: ${VOLCENGINE_VOICE_API_KEY:-}
+      VOLCENGINE_RESOURCE_ID: ${VOLCENGINE_RESOURCE_ID:-volc.seedasr.sauc.duration}
     restart: unless-stopped
