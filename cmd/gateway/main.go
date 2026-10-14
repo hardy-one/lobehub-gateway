@@ -11,6 +11,7 @@ import (
 	"time"
 
 	agentgateway "github.com/lobehub/lobehub/apps/agent-gateway-go"
+	asrgateway "github.com/lobehub/lobehub/apps/asr-gateway-go"
 	devicegateway "github.com/lobehub/lobehub/apps/device-gateway-go"
 )
 
@@ -29,6 +30,7 @@ type serviceResult struct {
 type gatewayConfigs struct {
 	agent  agentgateway.Config
 	device devicegateway.Config
+	asr    *asrgateway.Config
 }
 
 func main() {
@@ -51,7 +53,7 @@ func run() int {
 
 func configsFromEnv() (gatewayConfigs, error) {
 	// The unified binary ignores PORT: each service gets its own variable so
-	// the two listeners cannot collide in a single process.
+	// the listeners cannot collide in a single process.
 	agentCfg := agentgateway.ConfigFromEnv()
 	agentCfg.Port = envOrDefault("AGENT_PORT", "8787")
 	if err := agentCfg.Validate(); err != nil {
@@ -64,11 +66,22 @@ func configsFromEnv() (gatewayConfigs, error) {
 		return gatewayConfigs{}, errors.New("invalid device configuration: " + err.Error())
 	}
 
-	return gatewayConfigs{agent: agentCfg, device: deviceCfg}, nil
+	var asrCfg *asrgateway.Config
+	// ASR gateway is enabled if ASR_ENABLED=true or an ASR API key is provided
+	if os.Getenv("ASR_ENABLED") == "true" || os.Getenv("VOLCENGINE_VOICE_API_KEY") != "" {
+		cfg := asrgateway.ConfigFromEnv()
+		cfg.Port = envOrDefault("ASR_PORT", "8789")
+		if err := cfg.Validate(); err != nil {
+			return gatewayConfigs{}, errors.New("invalid asr configuration: " + err.Error())
+		}
+		asrCfg = &cfg
+	}
+
+	return gatewayConfigs{agent: agentCfg, device: deviceCfg, asr: asrCfg}, nil
 }
 
 func newServices(configs gatewayConfigs) []service {
-	return []service{
+	svcs := []service{
 		newService(
 			"agent gateway",
 			configs.agent.Port,
@@ -84,6 +97,18 @@ func newServices(configs gatewayConfigs) []service {
 			configs.device.WriteTimeout,
 		),
 	}
+
+	if configs.asr != nil {
+		svcs = append(svcs, newService(
+			"asr gateway",
+			configs.asr.Port,
+			asrgateway.NewServer(*configs.asr).Routes(),
+			configs.asr.ReadTimeout,
+			configs.asr.WriteTimeout,
+		))
+	}
+
+	return svcs
 }
 
 func newService(name, port string, handler http.Handler, readTimeout, writeTimeout time.Duration) service {
