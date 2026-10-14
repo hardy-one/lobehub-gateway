@@ -146,7 +146,11 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer asrProv.Close()
 
-	var sequence int64 = 1
+	var (
+		sequence int64 = 1
+		lastText string
+		textMu   sync.Mutex
+	)
 	nextSeq := func() int64 {
 		return atomic.AddInt64(&sequence, 1) - 1
 	}
@@ -165,6 +169,13 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				if ev.IsFinal {
 					eventType = "transcript.final"
 				}
+
+				textMu.Lock()
+				if ev.Text != "" {
+					lastText = ev.Text
+				}
+				textMu.Unlock()
+
 				_ = clientConn.writeJSON(mustMarshal(map[string]any{
 					"sessionId": sessionID,
 					"sequence":  nextSeq(),
@@ -266,6 +277,21 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				}))
 			} else if msg.Type == "session.end" {
 				_ = asrProv.EndSession()
+
+				// If we have recognized text, ensure a transcript.final is emitted before completed
+				textMu.Lock()
+				finalText := lastText
+				textMu.Unlock()
+				if finalText != "" {
+					_ = clientConn.writeJSON(mustMarshal(map[string]any{
+						"sessionId": sessionID,
+						"sequence":  nextSeq(),
+						"segmentId": "seg_dictation",
+						"text":      finalText,
+						"type":      "transcript.final",
+					}))
+				}
+
 				// Immediately notify client session is completed so client won't trigger FINAL_TIMEOUT
 				_ = clientConn.writeJSON(mustMarshal(map[string]any{
 					"sessionId":        sessionID,
