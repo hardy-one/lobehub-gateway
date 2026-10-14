@@ -31,6 +31,7 @@
 | --- | --- | --- |
 | [`device-gateway-go`](./device-gateway-go/README.md) | 已实现 | 设备网关，用于路由 LobeHub 设备连接、状态查询、工具调用、系统信息和 agent 运行请求。 |
 | [`agent-gateway-go`](./agent-gateway-go/README.md) | 已实现 | Agent 网关，用于中转浏览器 WebSocket 会话和服务端推送的 agent 事件流。 |
+| [`asr-gateway-go`](./asr-gateway-go/README.md) | 已实现 | ASR 语音听写网关，用于桥接 LobeHub 前端实时语音 PCM 流与后端流式语音识别服务（如火山引擎）。 |
 
 ## 统一二进制
 
@@ -75,6 +76,10 @@ lobehub-gateway-go/
 | `LOBE_API_BASE_URL` | `https://app.lobehub.com` | 仅 Agent | LobeHub API 基础地址 |
 | `AGENT_PORT` | `8787` | 仅 Agent | Agent 网关监听端口 |
 | `DEVICE_PORT` | `8788` | 仅 Device | Device 网关监听端口 |
+| `ASR_PORT` | `8789` | 仅 ASR | ASR 语音听写网关监听端口 |
+| `ASR_PROVIDER` | `volcengine` | 仅 ASR | 实时 ASR 提供商（目前支持 `volcengine`） |
+| `VOLCENGINE_VOICE_API_KEY` | — | 仅 ASR | 火山引擎语音识别 API Key |
+| `VOLCENGINE_RESOURCE_ID` | `volc.seedasr.sauc.duration` | 仅 ASR | 火山引擎模型资源 ID（默认豆包流式 2.0） |
 | `READ_TIMEOUT` | `30s` | 是 | HTTP 读取超时 |
 | `WRITE_TIMEOUT` | `1m` | 是 | HTTP 写入超时 |
 | `REQUEST_LOG_ENABLED` | `false` | 是 | 是否输出每个 HTTP 请求的结构化访问日志 |
