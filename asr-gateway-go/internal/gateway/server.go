@@ -266,6 +266,13 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				}))
 			} else if msg.Type == "session.end" {
 				_ = asrProv.EndSession()
+				// Immediately notify client session is completed so client won't trigger FINAL_TIMEOUT
+				_ = clientConn.writeJSON(mustMarshal(map[string]any{
+					"sessionId":        sessionID,
+					"sequence":         nextSeq(),
+					"type":             "session.completed",
+					"forwardedAudioMs": 0,
+				}))
 			} else if msg.Type == "session.cancel" {
 				_ = asrProv.Close()
 				break
