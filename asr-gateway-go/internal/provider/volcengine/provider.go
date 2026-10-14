@@ -254,7 +254,14 @@ func (p *VolcengineProvider) recvLoop() {
 		compression := msg[2] & 0x0f
 
 		payload := msg[headerSize*4:]
+		// 官方 ParseResponse: 解析 messageTypeSpecificFlags
 		if (flags & 0x01) != 0 { // has sequence
+			if len(payload) >= 4 {
+				payload = payload[4:]
+			}
+		}
+		isLastPackage := (flags & 0x02) != 0
+		if (flags & 0x04) != 0 { // has event
 			if len(payload) >= 4 {
 				payload = payload[4:]
 			}
@@ -274,6 +281,13 @@ func (p *VolcengineProvider) recvLoop() {
 		}
 
 		if len(payload) == 0 {
+			if isLastPackage {
+				p.eventsCh <- provider.TranscriptEvent{
+					SegmentID: "seg_dictation",
+					Text:      "",
+					IsFinal:   true,
+				}
+			}
 			continue
 		}
 
@@ -309,11 +323,11 @@ func (p *VolcengineProvider) recvLoop() {
 					text = resp.Result.Text
 				}
 
-				if text != "" {
+				if text != "" || isLastPackage {
 					p.eventsCh <- provider.TranscriptEvent{
 						SegmentID: "seg_dictation",
 						Text:      text,
-						IsFinal:   false,
+						IsFinal:   isLastPackage,
 					}
 				}
 			}
