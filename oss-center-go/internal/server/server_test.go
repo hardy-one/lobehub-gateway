@@ -32,7 +32,7 @@ func get(t *testing.T, handler http.Handler, path string) *httptest.ResponseReco
 // A container's first health check can arrive before the first pass finishes;
 // that is not a failure.
 func TestHealthzIsOKBeforeTheFirstPass(t *testing.T) {
-	reconciler := reconcile.New(fakeStore{}, nil, time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	reconciler := reconcile.New(fakeStore{}, nil, nil, time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	handler := New(reconciler, []string{"telegram"}).Routes()
 
 	recorder := get(t, handler, "/healthz")
@@ -46,7 +46,7 @@ func TestHealthzIsOKBeforeTheFirstPass(t *testing.T) {
 }
 
 func TestHealthzReportsAFailedPass(t *testing.T) {
-	reconciler := reconcile.New(fakeStore{err: context.DeadlineExceeded}, nil, time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	reconciler := reconcile.New(fakeStore{err: context.DeadlineExceeded}, nil, nil, time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	reconciler.RunOnce(context.Background())
 	handler := New(reconciler, nil).Routes()
 
@@ -58,7 +58,7 @@ func TestHealthzReportsAFailedPass(t *testing.T) {
 }
 
 func TestStatusReportsDeclaredPlatformsAndLastRun(t *testing.T) {
-	reconciler := reconcile.New(fakeStore{}, nil, time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	reconciler := reconcile.New(fakeStore{}, nil, nil, time.Minute, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	reconciler.RunOnce(context.Background())
 	handler := New(reconciler, []string{"discord", "telegram"}).Routes()
 

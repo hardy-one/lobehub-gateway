@@ -106,8 +106,49 @@ func TestValidateRequiresBothEndpoints(t *testing.T) {
 	}
 
 	base.LobeHubBaseURL = "http://lobehub:3210"
-	if err := base.Validate(); err == nil {
+	// A deployment of webhook platforms alone never talks to the message
+	// gateway, so it must not be asked for one.
+	base.Platforms = []Platform{{Credentials: map[string]any{"botToken": "y"}, ID: "telegram"}}
+	if err := base.Validate(); err != nil {
+		t.Fatalf("a webhook-only deployment needs no gateway: %v", err)
+	}
+
+	// A WebSocket singleton has to be registered somewhere, so it does.
+	base.Platforms = []Platform{{
+		ApplicationID: "app-id",
+		Credentials:   map[string]any{"botToken": "x", "publicKey": "key"},
+		Singleton:     true,
+		ID:            "discord",
+	}}
+	err := base.Validate()
+	if err == nil {
 		t.Fatal("expected a missing MESSAGE_GATEWAY_URL to be rejected")
+	}
+	if !strings.Contains(err.Error(), "MESSAGE_GATEWAY_URL") || !strings.Contains(err.Error(), "discord") {
+		t.Fatalf("the error should name the variable and the platform, got %v", err)
+	}
+}
+
+func TestPlatformsFromEnvMarksOnlyWebsocketTransportsAsSingleton(t *testing.T) {
+	t.Setenv("MESSENGER_DISCORD_APPLICATION_ID", "app-id")
+	t.Setenv("MESSENGER_DISCORD_BOT_TOKEN", "x")
+	t.Setenv("MESSENGER_DISCORD_PUBLIC_KEY", "key")
+	t.Setenv("MESSENGER_TELEGRAM_BOT_TOKEN", "y")
+
+	cfg := Config{Platforms: platformsFromEnv()}
+
+	if !cfg.UsesPlatformConnections() {
+		t.Fatal("discord is a websocket singleton and needs a gateway connection")
+	}
+	byID := map[string]Platform{}
+	for _, platform := range cfg.Platforms {
+		byID[platform.ID] = platform
+	}
+	if !byID["discord"].Singleton {
+		t.Fatal("discord should be a singleton")
+	}
+	if byID["telegram"].Singleton {
+		t.Fatal("telegram is webhook transport; LobeHub connects it on demand")
 	}
 }
 
