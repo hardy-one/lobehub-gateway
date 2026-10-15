@@ -13,6 +13,8 @@ import (
 	agentgateway "github.com/lobehub/lobehub/apps/agent-gateway-go"
 	asrgateway "github.com/lobehub/lobehub/apps/asr-gateway-go"
 	devicegateway "github.com/lobehub/lobehub/apps/device-gateway-go"
+	messagegateway "github.com/lobehub/lobehub/apps/message-gateway-go"
+	osscenter "github.com/lobehub/lobehub/apps/oss-center-go"
 )
 
 type service struct {
@@ -28,9 +30,11 @@ type serviceResult struct {
 }
 
 type gatewayConfigs struct {
-	agent  agentgateway.Config
-	device devicegateway.Config
-	asr    *asrgateway.Config
+	agent     agentgateway.Config
+	device    devicegateway.Config
+	asr       *asrgateway.Config
+	message   messagegateway.Config
+	ossCenter *osscenter.Config
 }
 
 func main() {
@@ -77,7 +81,33 @@ func configsFromEnv() (gatewayConfigs, error) {
 		asrCfg = &cfg
 	}
 
-	return gatewayConfigs{agent: agentCfg, device: deviceCfg, asr: asrCfg}, nil
+	// The message gateway holds no provider credentials of its own: LobeHub
+	// sends every connection's credentials with the connection, so the service
+	// always starts.
+	messageCfg := messagegateway.ConfigFromEnv()
+	messageCfg.Port = envOrDefault("MESSAGE_PORT", "8790")
+	if err := messageCfg.Validate(); err != nil {
+		return gatewayConfigs{}, errors.New("invalid message configuration: " + err.Error())
+	}
+
+	// oss-center writes deployment-level state (SystemBot providers) rather than
+	// serving traffic, so it only starts when a deployment asks for it. Its
+	// configuration is validated here, at startup, rather than at first use.
+	var ossCenterCfg *osscenter.Config
+	if ossCenter := osscenter.ConfigFromEnv(); ossCenter.Enabled {
+		if err := ossCenter.Validate(); err != nil {
+			return gatewayConfigs{}, errors.New("invalid oss center configuration: " + err.Error())
+		}
+		ossCenterCfg = &ossCenter
+	}
+
+	return gatewayConfigs{
+		agent:     agentCfg,
+		asr:       asrCfg,
+		device:    deviceCfg,
+		message:   messageCfg,
+		ossCenter: ossCenterCfg,
+	}, nil
 }
 
 func newServices(configs gatewayConfigs) []service {
@@ -106,6 +136,45 @@ func newServices(configs gatewayConfigs) []service {
 			configs.asr.ReadTimeout,
 			configs.asr.WriteTimeout,
 		))
+	}
+
+	// The message gateway owns background work (held connections and the
+	// connection pull), so its shutdown has to stop that before the process
+	// exits — the HTTP server alone is not the whole service.
+	messageServer := messagegateway.NewServer(configs.message)
+	messageServer.Start()
+	messageService := newService(
+		"message gateway",
+		configs.message.Port,
+		messageServer.Routes(),
+		configs.message.ReadTimeout,
+		configs.message.WriteTimeout,
+	)
+	shutdownHTTP := messageService.shutdown
+	messageService.shutdown = func(ctx context.Context) error {
+		messageServer.Shutdown(ctx)
+		return shutdownHTTP(ctx)
+	}
+	svcs = append(svcs, messageService)
+
+	// oss-center owns a background convergence loop, so — like the message
+	// gateway above — its shutdown has to stop that loop, not just the listener.
+	if configs.ossCenter != nil {
+		ossCenter := osscenter.NewComponent(*configs.ossCenter, slog.Default())
+		ossCenter.Start(configs.ossCenter.Oneshot)
+		ossCenterService := newService(
+			"oss center",
+			configs.ossCenter.Port,
+			ossCenter.Routes(),
+			configs.message.ReadTimeout,
+			configs.message.WriteTimeout,
+		)
+		shutdownOssCenterHTTP := ossCenterService.shutdown
+		ossCenterService.shutdown = func(ctx context.Context) error {
+			ossCenter.Shutdown(ctx)
+			return shutdownOssCenterHTTP(ctx)
+		}
+		svcs = append(svcs, ossCenterService)
 	}
 
 	return svcs

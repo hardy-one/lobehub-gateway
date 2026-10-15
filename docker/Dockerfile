@@ -4,6 +4,8 @@ COPY go.mod go.sum ./
 COPY agent-gateway-go/ ./agent-gateway-go/
 COPY asr-gateway-go/ ./asr-gateway-go/
 COPY device-gateway-go/ ./device-gateway-go/
+COPY message-gateway-go/ ./message-gateway-go/
+COPY oss-center-go/ ./oss-center-go/
 COPY cmd/ ./cmd/
 ARG TARGETOS TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags='-s -w' -o /out/gateway ./cmd/gateway
@@ -11,6 +13,6 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags=
 FROM alpine:3.24
 RUN adduser -D -H -u 10001 appuser
 USER appuser
-EXPOSE 8787 8788 8789
+EXPOSE 8787 8788 8789 8790 8791
 COPY --from=builder /out/gateway /usr/local/bin/gateway
 ENTRYPOINT ["gateway"]

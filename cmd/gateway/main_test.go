@@ -17,6 +17,7 @@ func TestConfigsFromEnvUsesDedicatedPorts(t *testing.T) {
 	t.Setenv("PORT", "9999")
 	t.Setenv("AGENT_PORT", "")
 	t.Setenv("DEVICE_PORT", "")
+	t.Setenv("MESSAGE_PORT", "")
 
 	configs, err := configsFromEnv()
 	if err != nil {
@@ -28,15 +29,19 @@ func TestConfigsFromEnvUsesDedicatedPorts(t *testing.T) {
 	if configs.device.Port != "8788" {
 		t.Fatalf("device port = %q, want 8788", configs.device.Port)
 	}
+	if configs.message.Port != "8790" {
+		t.Fatalf("message port = %q, want 8790", configs.message.Port)
+	}
 
 	t.Setenv("AGENT_PORT", "9000")
 	t.Setenv("DEVICE_PORT", "9001")
+	t.Setenv("MESSAGE_PORT", "9002")
 	configs, err = configsFromEnv()
 	if err != nil {
 		t.Fatalf("configsFromEnv() with overrides error = %v", err)
 	}
-	if configs.agent.Port != "9000" || configs.device.Port != "9001" {
-		t.Fatalf("ports = %q/%q, want 9000/9001", configs.agent.Port, configs.device.Port)
+	if configs.agent.Port != "9000" || configs.device.Port != "9001" || configs.message.Port != "9002" {
+		t.Fatalf("ports = %q/%q/%q, want 9000/9001/9002", configs.agent.Port, configs.device.Port, configs.message.Port)
 	}
 }
 
@@ -48,11 +53,12 @@ func TestConfigsFromEnvRequiresServiceToken(t *testing.T) {
 	}
 }
 
-func TestRunServicesServesBothGatewaysAndStopsCleanly(t *testing.T) {
+func TestRunServicesServesEveryGatewayAndStopsCleanly(t *testing.T) {
 	t.Setenv("SERVICE_TOKEN", "test-token")
-	agentPort, devicePort := availablePorts(t)
-	t.Setenv("AGENT_PORT", agentPort)
-	t.Setenv("DEVICE_PORT", devicePort)
+	ports := availablePorts(t, 3)
+	t.Setenv("AGENT_PORT", ports[0])
+	t.Setenv("DEVICE_PORT", ports[1])
+	t.Setenv("MESSAGE_PORT", ports[2])
 
 	configs, err := configsFromEnv()
 	if err != nil {
@@ -67,6 +73,7 @@ func TestRunServicesServesBothGatewaysAndStopsCleanly(t *testing.T) {
 
 	waitForHealth(t, "http://127.0.0.1:"+configs.agent.Port+"/health")
 	waitForHealth(t, "http://127.0.0.1:"+configs.device.Port+"/health")
+	waitForHealth(t, "http://127.0.0.1:"+configs.message.Port+"/health")
 	stop <- os.Interrupt
 
 	select {
@@ -184,9 +191,9 @@ func shutdownTestService(name string, started chan<- string, release <-chan stru
 	}
 }
 
-func availablePorts(t *testing.T) (string, string) {
+func availablePorts(t *testing.T, count int) []string {
 	t.Helper()
-	listeners := make([]net.Listener, 2)
+	listeners := make([]net.Listener, count)
 	for i := range listeners {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
@@ -202,7 +209,7 @@ func availablePorts(t *testing.T) (string, string) {
 			t.Fatalf("listener.Close() error = %v", err)
 		}
 	}
-	return ports[0], ports[1]
+	return ports
 }
 
 func waitForHealth(t *testing.T, url string) {
