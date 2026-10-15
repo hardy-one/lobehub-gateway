@@ -66,6 +66,11 @@ Webhook platforms (Slack, Telegram, Linq) are LobeHub's to connect on demand, an
 
 `GET /healthz` answers `200` with `{"status":"ok"}` after a clean pass, `503` after a failed one, and `200` with `{"status":"pending"}` before the first pass finishes. `GET /status` returns the declared platforms and the last pass in full, including which platforms failed and which are stored but undeclared.
 
+## Known upstream limits
+
+- **Disabling a platform does not disconnect its users.** LobeHub's polling reconcile walks platform definitions and account links, not the `enabled` flag, so an existing WeChat link keeps being pushed to the gateway. Setting `MESSENGER_WECHAT_ENABLED=0` hides the platform and blocks new links; ending an existing one is the user's own unlink in `Settings → Messenger`.
+- **No platform behaviour settings.** Group `@mention` handling, access policies and reply formatting are hard-coded in LobeHub, and `system_bot_providers.settings` is read by nothing in the open-source runtime — which is why oss-center does not offer it.
+
 ## The LobeHub-side patch
 
 Two files, both additive:
