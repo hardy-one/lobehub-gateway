@@ -27,6 +27,11 @@ type Platform struct {
 	Credentials   map[string]any
 	Enabled       bool
 	ID            string
+	// Singleton marks a platform whose transport makes LobeHub keep exactly one
+	// platform-wide connection (a WebSocket) — the one piece of connection
+	// state a deployment has to register itself. Everything else is created on
+	// demand by LobeHub.
+	Singleton bool
 }
 
 // Validate reports the first field this platform cannot be provisioned without.
@@ -89,8 +94,10 @@ func (c Config) Validate() error {
 	if c.LobeHubBaseURL == "" {
 		return fmt.Errorf("LOBE_API_BASE_URL is required")
 	}
-	if c.MessageGatewayURL == "" {
-		return fmt.Errorf("MESSAGE_GATEWAY_URL is required")
+	// Only a WebSocket singleton needs the gateway; a deployment running purely
+	// webhook platforms talks to LobeHub and the platform APIs alone.
+	if c.UsesPlatformConnections() && c.MessageGatewayURL == "" {
+		return fmt.Errorf("MESSAGE_GATEWAY_URL is required for %s", strings.Join(c.singletonPlatforms(), ", "))
 	}
 	if c.ServiceToken == "" {
 		return fmt.Errorf("SERVICE_TOKEN is required")
@@ -116,6 +123,23 @@ func (c Config) DeclaredPlatforms() []string {
 	return ids
 }
 
+// UsesPlatformConnections reports whether any declared platform needs a
+// platform-level gateway connection.
+func (c Config) UsesPlatformConnections() bool {
+	return len(c.singletonPlatforms()) > 0
+}
+
+func (c Config) singletonPlatforms() []string {
+	var ids []string
+	for _, platform := range c.Platforms {
+		if platform.Singleton {
+			ids = append(ids, platform.ID)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 // --------------------------- platform declarations ---------------------------
 
 // platformSpec maps one platform's environment onto its provider row. Only the
@@ -136,6 +160,11 @@ type platformSpec struct {
 	listFields map[string]bool
 	// required are the credentials fields a usable row must carry.
 	required []string
+	// transport mirrors LobeHub's `messenger/platforms/<id>/definition.ts`:
+	// the SystemBot transport is fixed per platform, not per deployment. Only
+	// `websocket` needs a connection registered from outside — LobeHub creates
+	// webhook typing shards on demand and drives the polling long polls itself.
+	transport string
 }
 
 var platformSpecs = []platformSpec{
@@ -146,8 +175,9 @@ var platformSpecs = []platformSpec{
 			"CLIENT_SECRET": "clientSecret",
 			"PUBLIC_KEY":    "publicKey",
 		},
-		id:       "discord",
-		required: []string{"botToken", "publicKey"},
+		id:        "discord",
+		required:  []string{"botToken", "publicKey"},
+		transport: "websocket",
 	},
 	{
 		credentialEnvs: map[string]string{
@@ -155,8 +185,9 @@ var platformSpecs = []platformSpec{
 			"BOT_USERNAME":   "botUsername",
 			"WEBHOOK_SECRET": "webhookSecret",
 		},
-		id:       "telegram",
-		required: []string{"botToken"},
+		id:        "telegram",
+		required:  []string{"botToken"},
+		transport: "webhook",
 	},
 	{
 		applicationIDEnv: "APP_ID",
@@ -165,8 +196,9 @@ var platformSpecs = []platformSpec{
 			"CLIENT_SECRET":  "clientSecret",
 			"SIGNING_SECRET": "signingSecret",
 		},
-		id:       "slack",
-		required: []string{"clientId", "clientSecret", "signingSecret"},
+		id:        "slack",
+		required:  []string{"clientId", "clientSecret", "signingSecret"},
+		transport: "webhook",
 	},
 	{
 		// WeChat owns no deployment credential: the iLink bot token is issued
@@ -174,6 +206,7 @@ var platformSpecs = []platformSpec{
 		// only an availability switch, so MESSENGER_WECHAT_ENABLED declares it.
 		declaredByEnabledOnly: true,
 		id:                    "wechat",
+		transport:             "polling",
 	},
 	{
 		credentialEnvs: map[string]string{
@@ -185,6 +218,7 @@ var platformSpecs = []platformSpec{
 		id:         "linq",
 		listFields: map[string]bool{"numbers": true},
 		required:   []string{"apiKey", "webhookSecret", "numbers"},
+		transport:  "webhook",
 	},
 }
 
@@ -248,6 +282,7 @@ func platformsFromEnv() []Platform {
 			Credentials:   credentials,
 			Enabled:       envBool(spec.enabledEnv(), true),
 			ID:            spec.id,
+			Singleton:     spec.transport == "websocket",
 		})
 	}
 	return platforms
