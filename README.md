@@ -25,21 +25,26 @@ For implemented gateway services, the target is compatibility with the public HT
 
 The alignment target does not include deliberately excluded platform surfaces: admin APIs, metrics, Durable Object storage or WebSocket hibernation, multi-instance coordination, geo reporting, and admin reporting.
 
+The message gateway has no standalone reference implementation to align against: its baseline is the client contract LobeHub itself speaks (`packages/env` gateway configuration plus the `MessageGatewayClient` in the server), which fixes the routes, payloads, credentials, and state vocabulary. Durable Object semantics that contract only implies — hibernation, park/backoff, and the cached-stats window — are deliberately not reproduced: an errored connection stays registered and is re-armed by the next reconcile instead of being parked.
+
 ## Projects
 
 | Project | Status | Description |
 | --- | --- | --- |
 | [`device-gateway-go`](./device-gateway-go/README.md) | Implemented | Device gateway for routing LobeHub device connections, status queries, tool calls, system information, and agent-run requests. |
 | [`agent-gateway-go`](./agent-gateway-go/README.md) | Implemented | Agent gateway for relaying browser WebSocket sessions and server-pushed agent events. |
+| [`asr-gateway-go`](./asr-gateway-go/README.md) | Implemented | ASR dictation gateway for bridging LobeHub's realtime speech PCM stream to a streaming speech recognition backend (Volcengine). |
+| [`message-gateway-go`](./message-gateway-go/README.md) | Implemented | Message gateway for holding IM platform connections on LobeHub's behalf (Discord WebSocket, WeChat iLink long polling) and forwarding platform events back to LobeHub. |
+| [`oss-center-go`](./oss-center-go/README.md) | Implemented | Opt-in provisioner for the deployment's SystemBot (Messenger) providers: declares each platform from its own environment and converges `system_bot_providers` through LobeHub's management endpoint. |
 
 ## Unified Binary
 
-The root module (`go.mod`) provides a unified entry point that starts both gateway services in a single process:
+The root module (`go.mod`) provides a unified entry point that starts every gateway service in a single process:
 
 ```text
 lobehub-gateway-go/
   go.mod                          # umbrella module with replace directives
-  cmd/gateway/main.go             # unified entry: runs agent + device simultaneously
+  cmd/gateway/main.go             # unified entry: runs agent + device + asr + message (+ oss-center when enabled)
   agent-gateway-go/
     gateway.go                    # facade re-exporting internal/gateway symbols
     go.mod                        # standalone module (unchanged)
@@ -48,6 +53,20 @@ lobehub-gateway-go/
     gateway.go                    # facade re-exporting internal/gateway symbols
     go.mod                        # standalone module (unchanged)
     internal/gateway/
+  asr-gateway-go/
+    gateway.go                    # facade re-exporting internal/gateway symbols
+    internal/gateway/
+    internal/provider/            # ASR provider implementations (volcengine)
+  message-gateway-go/
+    gateway.go                    # facade re-exporting internal/gateway symbols
+    internal/gateway/             # contract routes, connection registry, state machine, LobeHub client
+    internal/provider/            # platform runtimes (discord / wechat / slack / telegram)
+  oss-center-go/
+    oss_center.go                 # facade re-exporting internal symbols
+    internal/config/              # environment → platform declarations
+    internal/lobehub/             # LobeHub management-endpoint client
+    internal/reconcile/           # declarative convergence loop
+    internal/server/              # read-only /healthz + /status
 ```
 
 Each sub-project remains an independent Go module and can be built/tested on its own. The root module uses `replace` directives to import the sub-modules via facade files (`gateway.go`) that re-export the internal package symbols.
@@ -58,12 +77,12 @@ Each sub-project remains an independent Go module and can be built/tested on its
 # Build the unified binary
  go build -o gateway ./cmd/gateway
 
-# Run both services
+# Run every service
  SERVICE_TOKEN=your-token ./gateway
 
-# Defaults: agent on :8787, device on :8788
+# Defaults: agent on :8787, device on :8788, asr on :8789, message on :8790, oss-center on :8791 (opt-in)
 # Override ports via env vars
- AGENT_PORT=9000 DEVICE_PORT=9001 SERVICE_TOKEN=your-token ./gateway
+ AGENT_PORT=9000 DEVICE_PORT=9001 MESSAGE_PORT=9002 SERVICE_TOKEN=your-token ./gateway
 ```
 
 ### Environment Variables
@@ -72,15 +91,28 @@ Each sub-project remains an independent Go module and can be built/tested on its
 | --- | --- | --- | --- |
 | `SERVICE_TOKEN` | — | Yes | Service auth token (required) |
 | `JWKS_PUBLIC_KEY` | — | Yes | JWKS public key for JWT verification |
-| `LOBE_API_BASE_URL` | `https://app.lobehub.com` | Agent only | LobeHub API base URL |
+| `LOBE_API_BASE_URL` | `https://app.lobehub.com` | Agent, Message | LobeHub API base URL |
 | `AGENT_PORT` | `8787` | Agent only | Agent gateway listen port |
 | `DEVICE_PORT` | `8788` | Device only | Device gateway listen port |
+| `ASR_PORT` | `8789` | ASR only | ASR dictation gateway listen port |
+| `ASR_PROVIDER` | `volcengine` | ASR only | Streaming ASR provider (`volcengine` today) |
+| `VOLCENGINE_VOICE_API_KEY` | — | ASR only | Volcengine speech recognition API key |
+| `VOLCENGINE_RESOURCE_ID` | `volc.seedasr.sauc.duration` | ASR only | Volcengine model resource id (Doubao streaming 2.0 by default) |
+| `MESSAGE_PORT` | `8790` | Message only | Message gateway listen port |
+| `OSS_CENTER_ENABLED` | — | oss-center | Opt-in: run the SystemBot provisioner (see [`oss-center-go`](./oss-center-go/README.md) for the `MESSENGER_*` declarations) |
+| `OSS_CENTER_PORT` | `8791` | oss-center | oss-center status listener |
+| `OSS_CENTER_INTERVAL` | `60s` | oss-center | How often to converge LobeHub's stored providers |
+| `OSS_CENTER_ONESHOT` | — | oss-center | Run a single pass at startup instead of a loop |
+| `MESSAGE_GATEWAY_URL` | — | oss-center | Message gateway base URL, used to register platform-level connections |
+| `PULL_TOKEN` | — | Message only | Credential for pulling the connection list (LobeHub's `MESSAGE_GATEWAY_NODE_PULL_TOKEN`); without it the gateway can only be pushed to and cannot rebuild itself after a restart |
+| `PULL_INTERVAL` | `5m` | Message only | How often to re-pull the desired connection set |
+| `TYPING_INTERVAL` | `8s` | Message only | How often to re-issue the platform typing indicator |
 | `READ_TIMEOUT` | `30s` | Yes | HTTP read timeout |
 | `WRITE_TIMEOUT` | `1m` | Yes | HTTP write timeout |
 | `REQUEST_LOG_ENABLED` | `false` | Yes | Enable per-request structured HTTP access logging |
 | `SHUTDOWN_TIMEOUT` | `10s` | Yes | Graceful shutdown timeout |
 
-The unified binary does not read `PORT`; each service's port is controlled only by `AGENT_PORT` / `DEVICE_PORT`. The standalone binaries keep using `PORT` (default 8787) as before.
+The unified binary does not read `PORT`; each service's port is controlled only by `AGENT_PORT` / `DEVICE_PORT` / `ASR_PORT` / `MESSAGE_PORT`. The standalone binaries keep using `PORT` (default 8787) as before.
 
 ### Release Artifacts
 
@@ -103,6 +135,8 @@ docker build -f docker/Dockerfile -t lobehub-gateway-go .
 docker run --rm \
   -p 8787:8787 \
   -p 8788:8788 \
+  -p 8789:8789 \
+  -p 8790:8790 \
   -e SERVICE_TOKEN=your-token \
   lobehub-gateway-go
 ```
@@ -113,7 +147,7 @@ Or start the provided Compose service:
 SERVICE_TOKEN=your-token docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-The Compose file uses the unified binary's default listener ports and forwards `SERVICE_TOKEN`, `JWKS_PUBLIC_KEY`, `LOBE_API_BASE_URL`, and `REQUEST_LOG_ENABLED`. To use custom listener ports or timeout values, add the corresponding variables from the table above to the Compose service's `environment` section and update its `ports` mappings when changing `AGENT_PORT` or `DEVICE_PORT`.
+The Compose file uses the unified binary's default listener ports and forwards `SERVICE_TOKEN`, `JWKS_PUBLIC_KEY`, `LOBE_API_BASE_URL`, `PULL_TOKEN`, and `REQUEST_LOG_ENABLED`. The message gateway can only restore its connections by itself when `PULL_TOKEN` is set; without it LobeHub still pushes connections, but a restarted gateway waits for the next push. To use custom listener ports or timeout values, add the corresponding variables from the table above to the Compose service's `environment` section and update its `ports` mappings when changing `AGENT_PORT`, `DEVICE_PORT`, `ASR_PORT`, or `MESSAGE_PORT`.
 
 The CD workflow publishes a multi-architecture image for linux/amd64 and linux/arm64. By default it is published as `ghcr.io/lobehub/lobehub-gateway:<version>`; repository maintainers can override the destination with the `DOCKER_IMAGE` Actions secret. Stable releases selected as the default version also publish the `latest` tag.
 
@@ -156,6 +190,8 @@ Each gateway remains a standalone module and can be built/tested independently:
 ```bash
 cd agent-gateway-go && go test ./...
 cd device-gateway-go && go test ./...
+cd message-gateway-go && go test ./...
+cd oss-center-go && go test ./...
 ```
 
 See each gateway README for service-specific configuration, API routes, and local run instructions.
