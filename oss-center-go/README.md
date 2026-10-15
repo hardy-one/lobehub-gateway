@@ -27,7 +27,7 @@ Declaration is by presence: a platform is declared as soon as its credential gro
 | `OSS_CENTER_ONESHOT` | — | Run a single pass at startup instead of a loop. |
 | `LOBE_API_BASE_URL` | — | LobeHub base URL (the same variable the other gateways use). |
 | `SERVICE_TOKEN` | — | Authenticates against LobeHub and the message gateway alike; must equal LobeHub's `MESSAGE_GATEWAY_SERVICE_TOKEN`. |
-| `MESSAGE_GATEWAY_URL` | — | Base URL of the message gateway, used for platform-level connection registration. |
+| `MESSAGE_GATEWAY_URL` | — | Base URL of the message gateway. Required only when a WebSocket singleton is declared (Discord today) — a webhook-only deployment never talks to the gateway. |
 
 ### Platform declarations
 
@@ -42,6 +42,18 @@ Declaration is by presence: a platform is declared as soon as its credential gro
 An incomplete group is a startup error naming the missing variable — never a half-provisioned platform.
 
 `settings` and `connectionMode` are deliberately not configurable here: nothing in LobeHub's runtime reads them, so exposing them would only fake a knob that does nothing.
+
+## Platform connections
+
+One piece of connection state cannot be created on demand: a platform-wide WebSocket. Discord's SystemBot is a single socket shared by every user, and LobeHub expects it at `messenger:discord:singleton` — it routes a user's typing indicator to that exact id and never registers it itself. So oss-center does:
+
+- **declared + enabled** → `POST /api/connections` on every pass with `ensure: true`. The gateway treats an identical, live connection as a no-op, so a steady-state pass costs one round trip and never churns the socket. A connection lost to a gateway restart comes back on the next pass, which is the only recovery path there is.
+- **declared + disabled** → the connection is dropped. A live socket that nothing routes for is worse than no socket: it looks healthy while dropping every message.
+- **registered but no longer declared** → left alone, reported in `/status`. Same rule as the provider row.
+
+The payload mirrors what LobeHub sends for its own messenger connections: `connectionMode: websocket`, passive channel monitoring off, and inbound events forwarded to `/api/agent/messenger/webhooks/<platform>`.
+
+Webhook platforms (Slack, Telegram, Linq) are LobeHub's to connect on demand, and WeChat's long polls are driven by LobeHub's own reconcile — oss-center touches neither.
 
 ## What it does not do
 

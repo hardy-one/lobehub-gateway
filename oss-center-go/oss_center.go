@@ -14,6 +14,7 @@ import (
 
 	"github.com/lobehub/lobehub/apps/oss-center-go/internal/config"
 	"github.com/lobehub/lobehub/apps/oss-center-go/internal/lobehub"
+	"github.com/lobehub/lobehub/apps/oss-center-go/internal/messagegw"
 	"github.com/lobehub/lobehub/apps/oss-center-go/internal/reconcile"
 	"github.com/lobehub/lobehub/apps/oss-center-go/internal/server"
 )
@@ -37,6 +38,7 @@ func NewComponent(cfg Config, log *slog.Logger) *Component {
 	}
 	reconciler := reconcile.New(
 		lobehub.New(cfg.LobeHubBaseURL, cfg.ServiceToken),
+		platformConnections(cfg),
 		cfg.Platforms,
 		cfg.Interval,
 		log,
@@ -67,6 +69,16 @@ func (c *Component) Start(oneshot bool) {
 }
 
 func (c *Component) Routes() http.Handler { return c.server.Routes() }
+
+// platformConnections builds the gateway client only when a declared platform
+// actually needs one: a deployment running webhook platforms talks to LobeHub
+// and the platform APIs alone, and never depends on the gateway.
+func platformConnections(cfg Config) reconcile.Gateway {
+	if cfg.MessageGatewayURL == "" {
+		return nil
+	}
+	return messagegw.New(cfg.MessageGatewayURL, cfg.ServiceToken)
+}
 
 // Shutdown stops the loop and waits for the in-flight pass to finish, so a
 // pass cannot be cut off halfway through writing a platform's state.
