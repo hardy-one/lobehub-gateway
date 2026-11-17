@@ -163,6 +163,30 @@ func TestCollectReplayAheadClientReportsGap(t *testing.T) {
 	}
 }
 
+func TestV1AheadClientResumeResetsLastSeq(t *testing.T) {
+	_, ts := testStateServer(t)
+	postJSON(t, ts.URL+"/api/operations/init", map[string]any{"operationId": "op-ahead-v1", "userId": "user-1"}, http.StatusOK)
+	postJSON(t, ts.URL+"/api/operations/push-event", eventBody("op-ahead-v1", "before-resume", "stream_chunk"), http.StatusOK)
+
+	ws := dialWebSocket(t, ts.URL, "/ws?operationId=op-ahead-v1")
+	defer ws.close()
+	ws.writeJSON(t, map[string]any{"type": "auth", "token": "service-token"})
+	if msg := ws.readJSON(t); msg["type"] != "auth_success" {
+		t.Fatalf("unexpected auth message: %+v", msg)
+	}
+	ws.writeJSON(t, map[string]any{"type": "resume", "lastEventId": "999", "wantStatus": true})
+	complete := ws.readJSON(t)
+	if complete["type"] != "resume_complete" || complete["gap"] != true {
+		t.Fatalf("expected v1 ahead-client gap=true, got %+v", complete)
+	}
+
+	postJSON(t, ts.URL+"/api/operations/push-event", eventBody("op-ahead-v1", "after-resume", "stream_chunk"), http.StatusOK)
+	message := ws.readJSON(t)
+	if message["type"] != "agent_event" || message["id"] != "2" {
+		t.Fatalf("expected v1 live event after lastSeq reset, got %+v", message)
+	}
+}
+
 func TestV2AheadClientResumeResetsLastSeq(t *testing.T) {
 	_, ts, signJWT := newV2TestServer(t)
 	defer ts.Close()
