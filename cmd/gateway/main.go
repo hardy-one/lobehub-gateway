@@ -112,14 +112,30 @@ func configsFromEnv() (gatewayConfigs, error) {
 }
 
 func newServices(configs gatewayConfigs) []service {
+	// The agent gateway owns the operation state store, so its listener alone
+	// is not the whole service: after the HTTP server stops accepting requests,
+	// Close must flush pending event counters and close SQLite. Without this
+	// hook a SIGTERM drops the last counter batch and the next process restarts
+	// event numbering from a stale value.
+	agentServer := agentgateway.NewServer(configs.agent)
+	agentService := newService(
+		"agent gateway",
+		configs.agent.Port,
+		agentServer.Routes(),
+		configs.agent.ReadTimeout,
+		configs.agent.WriteTimeout,
+	)
+	shutdownAgentHTTP := agentService.shutdown
+	agentService.shutdown = func(ctx context.Context) error {
+		httpErr := shutdownAgentHTTP(ctx)
+		if err := agentServer.Close(); err != nil {
+			return err
+		}
+		return httpErr
+	}
+
 	svcs := []service{
-		newService(
-			"agent gateway",
-			configs.agent.Port,
-			agentgateway.NewServer(configs.agent).Routes(),
-			configs.agent.ReadTimeout,
-			configs.agent.WriteTimeout,
-		),
+		agentService,
 		newService(
 			"device gateway",
 			configs.device.Port,
