@@ -102,6 +102,7 @@ lobehub-gateway-go/
 | `SERVICE_TOKEN` | — | 是 | 服务认证令牌（必填） |
 | `JWKS_PUBLIC_KEY` | — | 是 | JWT 验证用的 JWKS 公钥 |
 | `LOBE_API_BASE_URL` | `https://app.lobehub.com` | 仅 Agent | LobeHub API 基础地址 |
+| `GATEWAY_STATE_DB` | `/data/agent-gateway.db` | 仅 Agent | 保存 operation 状态与事件序号的 SQLite 文件；请指向持久化卷内的路径。 |
 | `AGENT_PORT` | `8787` | 仅 Agent | Agent 网关监听端口 |
 | `DEVICE_PORT` | `8788` | 仅 Device | Device 网关监听端口 |
 | `ASR_PORT` | `8789` | 仅 ASR | ASR 语音听写网关监听端口 |
@@ -157,7 +158,7 @@ docker run --rm \
 SERVICE_TOKEN=your-token docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-Compose 文件使用统一二进制的默认监听端口，并透传 `SERVICE_TOKEN`、`JWKS_PUBLIC_KEY`、`LOBE_API_BASE_URL`、`PULL_TOKEN` 和 `REQUEST_LOG_ENABLED`。消息网关只有配置了 `PULL_TOKEN` 才能在重启后自行恢复连接；不配置时仍可被 LobeHub 推送连接，但需要 LobeHub 重新下发。如需使用自定义监听端口或超时，请在 Compose 服务的 `environment` 中添加上表对应变量；修改 `AGENT_PORT`、`DEVICE_PORT`、`ASR_PORT` 或 `MESSAGE_PORT` 时还需同步更新 `ports` 映射。
+Compose 文件使用统一二进制的默认监听端口，并透传 `SERVICE_TOKEN`、`JWKS_PUBLIC_KEY`、`LOBE_API_BASE_URL`、`GATEWAY_STATE_DB`、`PULL_TOKEN` 和 `REQUEST_LOG_ENABLED`。它将 `gateway-state` 卷挂载到 `/data`：Agent Gateway 在此保存 operation 状态和事件序号，使容器重建后仍能判断运行是否已结束，并识别来自旧进程的客户端事件序号。此前的 Compose 配置没有挂载卷——请勿删除该卷或将 `GATEWAY_STATE_DB` 指向容器内的临时路径，否则重建时状态会丢失。若目录无法打开，网关会打印警告并继续以纯内存模式运行。消息网关只有配置了 `PULL_TOKEN` 才能在重启后自行恢复连接；不配置时仍可被 LobeHub 推送连接，但需要 LobeHub 重新下发。如需使用自定义监听端口或超时，请在 Compose 服务的 `environment` 中添加上表对应变量；修改 `AGENT_PORT`、`DEVICE_PORT`、`ASR_PORT` 或 `MESSAGE_PORT` 时还需同步更新 `ports` 映射。
 
 CD 工作流会发布 linux/amd64 和 linux/arm64 多架构镜像。默认地址为 `ghcr.io/lobehub/lobehub-gateway:<version>`；仓库维护者可以通过 Actions secret `DOCKER_IMAGE` 覆盖目标地址。被选为默认版本的稳定 Release 还会发布 `latest` 标签。
 

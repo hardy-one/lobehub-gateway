@@ -10,6 +10,7 @@ import (
 const defaultLobeAPIBaseURL = "https://app.lobehub.com"
 
 type Config struct {
+	StateDBPath     string
 	JWKSPublicKey   string
 	LobeAPIBaseURL  string
 	Port            string
@@ -29,6 +30,7 @@ func (c Config) Validate() error {
 
 func ConfigFromEnv() Config {
 	return Config{
+		StateDBPath:     envOrDefault("GATEWAY_STATE_DB", defaultStateDBPath),
 		JWKSPublicKey:   os.Getenv("JWKS_PUBLIC_KEY"),
 		LobeAPIBaseURL:  envOrDefault("LOBE_API_BASE_URL", defaultLobeAPIBaseURL),
 		Port:            envOrDefault("PORT", "8787"),

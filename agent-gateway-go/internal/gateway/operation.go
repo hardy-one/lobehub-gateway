@@ -77,6 +77,39 @@ func newOperation(server *Server, operationID string) *operation {
 	}
 }
 
+func (o *operation) applyRestoredState(record stateRecord) {
+	o.record.UserID = record.UserID
+	o.eventCounter = record.EventCounter
+	o.record.CreatedAt = record.CreatedAt
+	if isTerminalStatus(record.Status) {
+		o.record.Status = record.Status
+		o.scheduleCleanupLocked()
+		return
+	}
+	// Pending confirmations, inputs and open LLM calls never survive a
+	// restart. Restoring a waiting status would leave the client blocked on
+	// an approval that can never be answered; an empty status lets the next
+	// pushed event or LobeHub's running-operation marker resolve the run.
+	o.record.Status = ""
+}
+
+type operationStateSnapshot struct {
+	operationRecord
+	EventCounter int
+}
+
+func (o *operation) snapshotStateLocked() operationStateSnapshot {
+	return operationStateSnapshot{
+		operationRecord: operationRecord{
+			CreatedAt:   o.record.CreatedAt,
+			OperationID: o.record.OperationID,
+			Status:      o.record.Status,
+			UserID:      o.record.UserID,
+		},
+		EventCounter: o.eventCounter,
+	}
+}
+
 func (o *operation) init(operationID string, userID string, meta *operationMeta) {
 	o.mu.Lock()
 	o.record.OperationID = operationID
@@ -87,6 +120,10 @@ func (o *operation) init(operationID string, userID string, meta *operationMeta)
 	}
 	if o.record.CreatedAt.IsZero() {
 		o.record.CreatedAt = time.Now()
+	}
+	if o.server.stateStore != nil {
+		o.server.stateStore.flushCounter(o.record.OperationID, o.eventCounter)
+		o.server.stateStore.save(o.snapshotStateLocked())
 	}
 	o.stopCleanupLocked()
 	o.lastEventAt = time.Now()
@@ -141,6 +178,9 @@ func (o *operation) statusSnapshot() (bool, SessionStatus) {
 
 func (o *operation) nextEventIDLocked() string {
 	o.eventCounter++
+	if o.server.stateStore != nil {
+		o.server.stateStore.queueCounter(o.record.OperationID, o.eventCounter)
+	}
 	return jsonNumberString(o.eventCounter)
 }
 
@@ -196,6 +236,10 @@ func (o *operation) handleSessionEnd(status SessionStatus, summary string) {
 	msg := map[string]any{"summary": summary, "type": "session_complete"}
 	o.mu.Lock()
 	o.record.Status = status
+	if o.server.stateStore != nil {
+		o.server.stateStore.flushCounter(o.record.OperationID, o.eventCounter)
+		o.server.stateStore.save(o.snapshotStateLocked())
+	}
 	id := o.nextEventIDLocked()
 	msg["id"] = id
 	o.bufferLocked(id, msg)
@@ -210,6 +254,10 @@ func (o *operation) handleSessionEnd(status SessionStatus, summary string) {
 func (o *operation) updateStatus(status SessionStatus, summary string) {
 	o.mu.Lock()
 	o.record.Status = status
+	if o.server.stateStore != nil {
+		o.server.stateStore.flushCounter(o.record.OperationID, o.eventCounter)
+		o.server.stateStore.save(o.snapshotStateLocked())
+	}
 	id := o.nextEventIDLocked()
 	var msg map[string]any
 	if status == StatusCompleted {
@@ -358,11 +406,16 @@ func (o *operation) collectReplay(lastEventID string) ([]json.RawMessage, bool, 
 		}
 	}
 	sort.SliceStable(payloads, func(i, j int) bool { return messageID(payloads[i]) < messageID(payloads[j]) })
-	gap := o.eventCounter > since
-	if len(o.eventBuffer) > 0 {
-		gap = parseEventID(o.eventBuffer[0].ID) > since+1
-	}
+	gap := eventReplayHasGap(o.eventBuffer, since, o.eventCounter)
 	return payloads, gap, o.record.Status
+}
+
+func eventReplayHasGap(buffer []bufferedEvent, since int, counter int) bool {
+	if since > counter {
+		// The client saw a newer process than the one now serving it.
+		return true
+	}
+	return counter > since && (len(buffer) == 0 || parseEventID(buffer[0].ID) > since+1)
 }
 
 func (o *operation) hubSnapshot() (string, SessionStatus, *operationMeta) {
@@ -518,6 +571,10 @@ func (o *operation) fireWatchdog() {
 		o.record.Status = status
 		msg = map[string]any{"id": id, "summary": summary, "type": "session_complete"}
 	}
+	if o.server.stateStore != nil {
+		o.server.stateStore.flushCounter(o.record.OperationID, o.eventCounter)
+		o.server.stateStore.save(o.snapshotStateLocked())
+	}
 	o.bufferLocked(id, msg)
 	connections := o.authenticatedConnectionsLocked()
 	o.queueHubEventLocked(msg)
@@ -602,6 +659,9 @@ func (o *operation) cleanup() {
 	o.stopWatchdogLocked()
 	o.stopCleanupLocked()
 	operationID := o.record.OperationID
+	if o.server.stateStore != nil {
+		o.server.stateStore.delete(operationID)
+	}
 	o.mu.Unlock()
 	o.server.notifyLifecycle(o, "gone", "")
 	for _, conn := range connections {
@@ -628,6 +688,7 @@ type operationConnection struct {
 	att            clientAttachment
 	authTimer      *time.Timer
 	heartbeatTimer *time.Timer
+	lastSeq        int
 	mu             sync.RWMutex
 	operation      *operation
 	ws             *wsConn
@@ -856,8 +917,16 @@ func broadcast(connections []*operationConnection, msg any) {
 	if err != nil {
 		return
 	}
+	id := messageID(payload)
 	for _, conn := range connections {
+		conn.mu.Lock()
+		if id <= conn.lastSeq {
+			conn.mu.Unlock()
+			continue
+		}
 		_ = conn.writeRaw(payload)
+		conn.lastSeq = id
+		conn.mu.Unlock()
 	}
 }
 

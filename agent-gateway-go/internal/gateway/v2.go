@@ -136,6 +136,14 @@ func (c *hubConnection) subscribe(operationID string, lastEventID string, execut
 
 func (c *hubConnection) completeSubscribe(operationID string) {
 	op := c.server.getOrCreateOperation(operationID)
+	c.mu.Lock()
+	sub := c.subs[operationID]
+	if sub == nil {
+		c.mu.Unlock()
+		return
+	}
+	c.mu.Unlock()
+	ahead := sub.lastSeq > op.currentEventCounter()
 	owner, status, _ := op.hubSnapshot()
 	if owner != "" && owner != c.userID {
 		c.dropSubscription(operationID)
@@ -166,14 +174,20 @@ func (c *hubConnection) completeSubscribe(operationID string) {
 	}
 
 	c.mu.Lock()
-	sub := c.subs[operationID]
+	sub = c.subs[operationID]
 	if sub == nil {
 		c.mu.Unlock()
 		return
 	}
 	since := sub.lastSeq
+	if ahead {
+		// The client saw a newer gateway process. It will refill from LobeHub
+		// storage after gap=true; rewind before replayed events are delivered.
+		sub.lastSeq = 0
+	}
 	c.mu.Unlock()
 	events, gap, replayStatus := op.collectReplay(jsonNumberString(since))
+	gap = gap || ahead
 	filtered := events[:0]
 	for _, payload := range events {
 		if llmPayload(payload).Type == "llm_execute" {
@@ -377,6 +391,12 @@ func (s *Server) userHubConnections(userID string) []*hubConnection {
 		}
 	}
 	return connections
+}
+
+func (o *operation) currentEventCounter() int {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return o.eventCounter
 }
 
 func (c *hubConnection) deliverLocked(operationID string, sub *hubSubscription, payload json.RawMessage) error {

@@ -14,6 +14,7 @@ services:
       SERVICE_TOKEN: ${SERVICE_TOKEN:?SERVICE_TOKEN is required}
       JWKS_PUBLIC_KEY: ${JWKS_PUBLIC_KEY:-}
       LOBE_API_BASE_URL: ${LOBE_API_BASE_URL:-}
+      GATEWAY_STATE_DB: ${GATEWAY_STATE_DB:-/data/agent-gateway.db}
       PULL_TOKEN: ${PULL_TOKEN:-}
       REQUEST_LOG_ENABLED: ${REQUEST_LOG_ENABLED:-}
       ASR_PROVIDER: ${ASR_PROVIDER:-volcengine}
@@ -51,3 +52,10 @@ services:
       MESSENGER_LINQ_NUMBERS: ${MESSENGER_LINQ_NUMBERS:-}
       MESSENGER_LINQ_ENABLED: ${MESSENGER_LINQ_ENABLED:-}
     restart: unless-stopped
+    volumes:
+      # Required: without a named volume the SQLite file lives in the
+      # container layer and operation state is lost on recreate.
+      - gateway-state:/data
+
+volumes:
+  gateway-state:

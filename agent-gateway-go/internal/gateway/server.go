@@ -3,6 +3,7 @@ package gateway
 import (
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -27,12 +28,13 @@ type Server struct {
 	heartbeatTimeout time.Duration
 	operations       map[string]*operation
 	operationsMu     sync.Mutex
+	stateStore       *operationStateStore
 	v2Connections    map[*hubConnection]struct{}
 	v2Mu             sync.RWMutex
 }
 
 func NewServer(cfg Config) *Server {
-	return &Server{
+	srv := &Server{
 		auth:             newAuthResolver(cfg),
 		authTimeout:      defaultAuthTimeout,
 		cfg:              cfg,
@@ -41,6 +43,8 @@ func NewServer(cfg Config) *Server {
 		operations:       map[string]*operation{},
 		v2Connections:    map[*hubConnection]struct{}{},
 	}
+	srv.stateStore = newOperationStateStore(cfg.StateDBPath, slog.Default())
+	return srv
 }
 
 func (s *Server) Routes() http.Handler {
@@ -65,6 +69,11 @@ func (s *Server) getOrCreateOperation(operationID string) *operation {
 	}
 	op := newOperation(s, operationID)
 	s.operations[operationID] = op
+	if s.stateStore != nil {
+		if record, ok := s.stateStore.load(operationID); ok {
+			op.applyRestoredState(record)
+		}
+	}
 	return op
 }
 
@@ -280,11 +289,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		writeText(w, http.StatusBadRequest, "Missing operationId")
 		return
 	}
-	op := s.getOperation(operationID)
-	if op == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"clientConnected": false, "status": "unknown"})
-		return
-	}
+	op := s.getOrCreateOperation(operationID)
 	clientConnected, status := op.statusSnapshot()
 	writeJSON(w, http.StatusOK, map[string]any{"clientConnected": clientConnected, "status": status})
 }

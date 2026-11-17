@@ -102,6 +102,7 @@ Each sub-project remains an independent Go module and can be built/tested on its
 | `SERVICE_TOKEN` | — | Yes | Service auth token (required) |
 | `JWKS_PUBLIC_KEY` | — | Yes | JWKS public key for JWT verification |
 | `LOBE_API_BASE_URL` | `https://app.lobehub.com` | Agent, Message | LobeHub API base URL |
+| `GATEWAY_STATE_DB` | `/data/agent-gateway.db` | Agent only | SQLite file holding operation status and event counters; set to a path on a persistent volume. |
 | `AGENT_PORT` | `8787` | Agent only | Agent gateway listen port |
 | `DEVICE_PORT` | `8788` | Device only | Device gateway listen port |
 | `ASR_PORT` | `8789` | ASR only | ASR dictation gateway listen port |
@@ -157,7 +158,7 @@ Or start the provided Compose service:
 SERVICE_TOKEN=your-token docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-The Compose file uses the unified binary's default listener ports and forwards `SERVICE_TOKEN`, `JWKS_PUBLIC_KEY`, `LOBE_API_BASE_URL`, `PULL_TOKEN`, and `REQUEST_LOG_ENABLED`. The message gateway can only restore its connections by itself when `PULL_TOKEN` is set; without it LobeHub still pushes connections, but a restarted gateway waits for the next push. To use custom listener ports or timeout values, add the corresponding variables from the table above to the Compose service's `environment` section and update its `ports` mappings when changing `AGENT_PORT`, `DEVICE_PORT`, `ASR_PORT`, or `MESSAGE_PORT`.
+The Compose file uses the unified binary's default listener ports and forwards `SERVICE_TOKEN`, `JWKS_PUBLIC_KEY`, `LOBE_API_BASE_URL`, `GATEWAY_STATE_DB`, `PULL_TOKEN`, and `REQUEST_LOG_ENABLED`. It mounts the `gateway-state` volume at `/data`: the agent gateway stores operation status and event counters there so a recreated container can still answer whether a run ended and can detect a client event cursor from an older process. The previous Compose configuration had no such volume — do not remove it or point `GATEWAY_STATE_DB` at a container-only path, or state is lost on recreate. If the directory cannot be opened, the gateway logs a warning and continues with in-memory-only behavior. The message gateway can only restore its connections by itself when `PULL_TOKEN` is set; without it LobeHub still pushes connections, but a restarted gateway waits for the next push. To use custom listener ports or timeout values, add the corresponding variables from the table above to the Compose service's `environment` section and update its `ports` mappings when changing `AGENT_PORT`, `DEVICE_PORT`, `ASR_PORT`, or `MESSAGE_PORT`.
 
 The CD workflow publishes a multi-architecture image for linux/amd64 and linux/arm64. By default it is published as `ghcr.io/lobehub/lobehub-gateway:<version>`; repository maintainers can override the destination with the `DOCKER_IMAGE` Actions secret. Stable releases selected as the default version also publish the `latest` tag.
 

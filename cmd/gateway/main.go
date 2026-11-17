@@ -60,6 +60,7 @@ func configsFromEnv() (gatewayConfigs, error) {
 	// the listeners cannot collide in a single process.
 	agentCfg := agentgateway.ConfigFromEnv()
 	agentCfg.Port = envOrDefault("AGENT_PORT", "8787")
+	agentCfg.StateDBPath = envOrDefault("GATEWAY_STATE_DB", agentCfg.StateDBPath)
 	if err := agentCfg.Validate(); err != nil {
 		return gatewayConfigs{}, errors.New("invalid agent configuration: " + err.Error())
 	}

@@ -63,6 +63,7 @@ v2 协议在 `/v2/ws` upgrade 时完成认证。`token` 必填；`tokenType` 默
 | `SERVICE_TOKEN` | 必填 | `/api/operations/*` 与 WebSocket service-token 认证共用的服务令牌。未设置时进程会拒绝启动。 |
 | `JWKS_PUBLIC_KEY` | 空 | 包含 RS256 公钥的 JWKS JSON,用于 WebSocket JWT 认证。 |
 | `LOBE_API_BASE_URL` | `https://app.lobehub.com` | 用于 abandoned operation reconciliation、tool-result forwarding 等后端回调的 LobeHub API 基础地址。自托管部署需指向你自己的 LobeHub 实例。 |
+| `GATEWAY_STATE_DB` | `/data/agent-gateway.db` | 保存 operation 状态与事件序号的 SQLite 文件；父目录必须存在。无法打开时仅打印警告并禁用持久化，不影响启动。 |
 | `READ_TIMEOUT` | `30s` | Go HTTP 服务器读取超时时间。 |
 | `WRITE_TIMEOUT` | `1m` | Go HTTP 服务器写入超时时间。 |
 | `SHUTDOWN_TIMEOUT` | `10s` | 优雅关闭超时时间。 |
@@ -172,11 +173,14 @@ services:
       - "8788:8787"
     volumes:
       - ./agent-gateway-go-linux-amd64:/usr/local/bin/agent-gateway-go:ro
+      # 持久化 operation 状态所必需
+      - ./agent-gateway-state:/data
     entrypoint: ["/usr/local/bin/agent-gateway-go"]
     environment:
       SERVICE_TOKEN: ${AGENT_GATEWAY_SERVICE_TOKEN}
       JWKS_PUBLIC_KEY: ${JWKS_KEY}
       LOBE_API_BASE_URL: https://your-lobehub-host
+      GATEWAY_STATE_DB: /data/agent-gateway.db
     restart: always
 ```
 

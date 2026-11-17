@@ -16,7 +16,7 @@ The original Cloudflare Worker Agent Gateway remains the reference implementatio
 ## Deliberate trade-offs
 
 - Single process only. The backend `/api/operations/*` calls and the browser WebSocket for the same `operationId` must reach the same instance.
-- Runtime state lives in memory. Operations, buffered events, pending requests, v2 subscriptions and open LLM attempts are lost on restart. V2 clients reconnect and resubscribe, but events buffered only before a process restart cannot be replayed and must be recovered from LobeHub storage.
+- Runtime state lives in memory except for operation status and event counters, which are persisted in SQLite. Buffered events, pending requests, v2 subscriptions and open LLM attempts are lost on restart. V2 clients reconnect and resubscribe; when their last event id is ahead of the restarted process they receive `gap: true` and refill from LobeHub storage. Terminal statuses survive the restart, while running and waiting statuses return empty so stale approvals cannot block a client forever.
 - The admin surface is intentionally not implemented: `/api/admin/*`, `/admin/ws`, `ADMIN_TOKEN`, admin stats / metrics / errors and admin observer WebSockets are all absent.
 - Durable Object storage, alarms and WebSocket hibernation are replaced by in-process maps and timers.
 
@@ -63,6 +63,7 @@ The inactivity watchdog starts at operation initialization. Every backend activi
 | `SERVICE_TOKEN` | required | Shared service token for `/api/operations/*` and WebSocket service-token auth. The process refuses to start without it. |
 | `JWKS_PUBLIC_KEY` | empty | JWKS JSON containing an RS256 public key for JWT WebSocket auth. |
 | `LOBE_API_BASE_URL` | `https://app.lobehub.com` | LobeHub API base URL used for backend callbacks such as abandoned-operation reconciliation and tool-result forwarding. Point this at your own LobeHub instance for self-hosted deployments. |
+| `GATEWAY_STATE_DB` | `/data/agent-gateway.db` | SQLite file for operation status and event counters. The parent directory must exist; if it cannot be opened, persistence is disabled with a warning and the gateway still starts. |
 | `READ_TIMEOUT` | `30s` | Go HTTP server read timeout. |
 | `WRITE_TIMEOUT` | `1m` | Go HTTP server write timeout. |
 | `REQUEST_LOG_ENABLED` | `false` | Enable one structured log line per HTTP request. |
@@ -173,11 +174,14 @@ services:
       - "8788:8787"
     volumes:
       - ./agent-gateway-go-linux-amd64:/usr/local/bin/agent-gateway-go:ro
+      # Required for operation state to survive container recreation.
+      - ./agent-gateway-state:/data
     entrypoint: ["/usr/local/bin/agent-gateway-go"]
     environment:
       SERVICE_TOKEN: ${AGENT_GATEWAY_SERVICE_TOKEN}
       JWKS_PUBLIC_KEY: ${JWKS_KEY}
       LOBE_API_BASE_URL: https://your-lobehub-host
+      GATEWAY_STATE_DB: /data/agent-gateway.db
     restart: always
 ```
 
