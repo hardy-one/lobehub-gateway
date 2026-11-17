@@ -120,8 +120,8 @@ func TestOperationStateRestartReplayAndGap(t *testing.T) {
 
 	_, restarted := newStateServer()
 	defer restarted.Close()
-	if status := statusOf(t, restarted.URL, "op-restart"); status != "unknown" {
-		t.Fatalf("running operation must come back with empty status, got %s", status)
+	if status := statusOf(t, restarted.URL, "op-restart"); status != "" {
+		t.Fatalf("running operation with no in-memory state must report an empty status, got %s", status)
 	}
 	postJSON(t, restarted.URL+"/api/operations/update-status", map[string]any{
 		"operationId": "op-restart", "status": "completed", "summary": "done",
@@ -227,6 +227,77 @@ func TestSQLiteUnavailableFallsBackToMemory(t *testing.T) {
 	_, status := op.statusSnapshot()
 	if status != "running" {
 		t.Fatalf("memory-only operation should still work, got %s", status)
+	}
+}
+
+func TestFlushCounterPreservesTimerForOtherPendingOperations(t *testing.T) {
+	store := testStateStore(t)
+	store.save(operationStateSnapshot{
+		operationRecord: operationRecord{
+			CreatedAt:   time.Now(),
+			OperationID: "op-concurrent-a",
+			Status:      StatusRunning,
+			UserID:      "user-1",
+		},
+	})
+	store.save(operationStateSnapshot{
+		operationRecord: operationRecord{
+			CreatedAt:   time.Now(),
+			OperationID: "op-concurrent-b",
+			Status:      StatusRunning,
+			UserID:      "user-1",
+		},
+	})
+	store.queueCounter("op-concurrent-a", 1)
+	store.queueCounter("op-concurrent-b", 2)
+	store.flushCounter("op-concurrent-a", 1)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if record, ok := store.load("op-concurrent-b"); ok && record.EventCounter == 2 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("pending counter for the other operation was never flushed")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestStatusOfUnknownOperationDoesNotCreateOne(t *testing.T) {
+	srv, ts := testStateServer(t)
+	defer ts.Close()
+
+	srv.operationsMu.Lock()
+	before := len(srv.operations)
+	srv.operationsMu.Unlock()
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/operations/status?operationId=op-never-created", nil)
+	req.Header.Set("Authorization", "Bearer service-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for an unknown operation, got %d", resp.StatusCode)
+	}
+	var result struct {
+		ClientConnected bool   `json:"clientConnected"`
+		Status          string `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "" || result.ClientConnected {
+		t.Fatalf("unexpected unknown-operation status: %+v", result)
+	}
+
+	srv.operationsMu.Lock()
+	after := len(srv.operations)
+	srv.operationsMu.Unlock()
+	if after != before {
+		t.Fatalf("status query created an operation: before=%d after=%d", before, after)
 	}
 }
 

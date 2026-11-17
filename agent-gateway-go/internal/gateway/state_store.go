@@ -138,10 +138,6 @@ func (s *operationStateStore) queueCounter(operationID string, counter int) {
 func (s *operationStateStore) flushCounter(operationID string, counter int) {
 	s.flushMu.Lock()
 	delete(s.pending, operationID)
-	if s.flushTimer != nil {
-		s.flushTimer.Stop()
-		s.flushTimer = nil
-	}
 	s.flushMu.Unlock()
 	_, err := s.db.Exec(`UPDATE operation_state SET event_counter = ?, updated_at = ? WHERE id = ?`,
 		counter, time.Now().UnixMilli(), operationID)

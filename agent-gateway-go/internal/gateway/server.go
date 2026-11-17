@@ -289,7 +289,19 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		writeText(w, http.StatusBadRequest, "Missing operationId")
 		return
 	}
-	op := s.getOrCreateOperation(operationID)
+	op := s.getOperation(operationID)
+	if op == nil {
+		if s.stateStore != nil {
+			if record, ok := s.stateStore.load(operationID); ok {
+				if isTerminalStatus(record.Status) {
+					writeJSON(w, http.StatusOK, map[string]any{"clientConnected": false, "status": record.Status})
+					return
+				}
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"clientConnected": false, "status": ""})
+		return
+	}
 	clientConnected, status := op.statusSnapshot()
 	writeJSON(w, http.StatusOK, map[string]any{"clientConnected": clientConnected, "status": status})
 }
