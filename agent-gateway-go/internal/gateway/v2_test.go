@@ -141,7 +141,10 @@ func TestV2PendingSubscribeLifecycleAndOwnership(t *testing.T) {
 	_ = ws.readJSON(t)
 	ws.writeJSON(t, map[string]any{"type": "subscribe", "operationId": "mux-pending"})
 	pending := ws.readJSON(t)
-	if pending["type"] != "resume_complete" || pending["pending"] != true || pending["gap"] != false {
+	// A pending subscription means the client's cursor is stale relative to
+	// an operation the gateway no longer knows about (LOBE-186 defect 2):
+	// gap must be reported so the client refills from LobeHub storage.
+	if pending["type"] != "resume_complete" || pending["pending"] != true || pending["gap"] != true {
 		t.Fatalf("unexpected pending response: %+v", pending)
 	}
 

@@ -169,7 +169,7 @@ func (c *hubConnection) completeSubscribe(operationID string) {
 			c.completeSubscribe(operationID)
 			return
 		}
-		c.writeJSONOrClose(map[string]any{"gap": false, "operationId": operationID, "pending": true, "type": "resume_complete"})
+		c.writeJSONOrClose(map[string]any{"gap": true, "operationId": operationID, "pending": true, "type": "resume_complete"})
 		return
 	}
 

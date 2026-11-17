@@ -56,6 +56,13 @@ func openOperationStateDB(path string) (*sql.DB, error) {
 			return nil, fmt.Errorf("state database directory unavailable: %s", dir)
 		}
 	}
+	// A zero-length file is not a valid database: SQLite would silently treat
+	// it as an empty database and re-create the schema in place, losing prior
+	// terminal state without any warning. Treat truncation as corruption and
+	// degrade to memory mode (LOBE-186 defect 1).
+	if info, err := os.Stat(path); err == nil && info.Size() == 0 {
+		return nil, fmt.Errorf("state database file is empty (possibly truncated): %s", path)
+	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
