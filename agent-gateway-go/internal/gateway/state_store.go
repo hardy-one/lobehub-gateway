@@ -16,6 +16,7 @@ const (
 	defaultStateDBPath      = "/data/agent-gateway.db"
 	stateStoreFlushInterval = 200 * time.Millisecond
 	stateStoreFlushBatch    = 50
+	stateStoreCloseTimeout  = 2 * time.Second
 	stateOrphanTTL          = 24 * time.Hour
 )
 
@@ -30,9 +31,13 @@ type operationStateStore struct {
 	db     *sql.DB
 	logger *slog.Logger
 
-	flushMu    sync.Mutex
-	pending    map[string]int
-	flushTimer *time.Timer
+	closeOnce   sync.Once
+	closed      chan struct{}
+	closing     chan struct{}
+	cleanupDone chan struct{}
+	flushMu     sync.Mutex
+	pending     map[string]int
+	flushTimer  *time.Timer
 }
 
 func newOperationStateStore(path string, logger *slog.Logger) *operationStateStore {
@@ -45,9 +50,42 @@ func newOperationStateStoreWithPath(path string, logger *slog.Logger) *operation
 		logger.Warn("operation state persistence disabled", "path", path, "error", err)
 		return nil
 	}
-	store := &operationStateStore{db: db, logger: logger, pending: map[string]int{}}
+	store := &operationStateStore{
+		db:          db,
+		logger:      logger,
+		pending:     map[string]int{},
+		closed:      make(chan struct{}),
+		closing:     make(chan struct{}),
+		cleanupDone: make(chan struct{}),
+	}
 	go store.cleanupLoop()
 	return store
+}
+
+// Close stops background work, flushes every pending counter and closes the
+// database. It is safe to call more than once and returns within
+// stateStoreCloseTimeout even when a write is stuck.
+func (s *operationStateStore) Close() error {
+	s.closeOnce.Do(func() {
+		close(s.closing)
+		<-s.cleanupDone
+		if s.db != nil {
+			done := make(chan struct{})
+			go func() {
+				s.flushCounters(nil)
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(stateStoreCloseTimeout):
+				s.logger.Warn("operation state counter flush timed out during close")
+			}
+			_ = s.db.Close()
+		}
+		close(s.closed)
+	})
+	<-s.closed
+	return nil
 }
 
 func openOperationStateDB(path string) (*sql.DB, error) {
@@ -188,11 +226,17 @@ func (s *operationStateStore) delete(operationID string) {
 }
 
 func (s *operationStateStore) cleanupLoop() {
+	defer close(s.cleanupDone)
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
 	s.cleanupOrphans()
-	for range ticker.C {
-		s.cleanupOrphans()
+	for {
+		select {
+		case <-s.closing:
+			return
+		case <-ticker.C:
+			s.cleanupOrphans()
+		}
 	}
 }
 

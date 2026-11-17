@@ -31,6 +31,10 @@ type hubConnection struct {
 }
 
 func (s *Server) handleV2WebSocket(w http.ResponseWriter, r *http.Request) {
+	if !s.acceptingOperations() {
+		writeText(w, http.StatusServiceUnavailable, "Server shutting down")
+		return
+	}
 	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 		writeText(w, http.StatusUpgradeRequired, "Expected WebSocket upgrade")
 		return
@@ -152,6 +156,7 @@ func (c *hubConnection) completeSubscribe(operationID string) {
 	}
 	if owner == "" {
 		c.mu.Lock()
+		since := sub.lastSeq
 		if sub := c.subs[operationID]; sub != nil {
 			sub.state = "pending"
 			sub.queue = nil
@@ -169,7 +174,7 @@ func (c *hubConnection) completeSubscribe(operationID string) {
 			c.completeSubscribe(operationID)
 			return
 		}
-		c.writeJSONOrClose(map[string]any{"gap": true, "operationId": operationID, "pending": true, "type": "resume_complete"})
+		c.writeJSONOrClose(map[string]any{"gap": since > 0, "operationId": operationID, "pending": true, "type": "resume_complete"})
 		return
 	}
 

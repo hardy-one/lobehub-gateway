@@ -39,6 +39,68 @@ func testStateServer(t *testing.T) (*Server, *httptest.Server) {
 	return srv, httpSrv
 }
 
+func TestOperationStateStoreCloseFlushesPendingCounters(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := newOperationStateStoreWithPath(dbPath, logger)
+	if store == nil {
+		t.Fatal("expected SQLite state store")
+	}
+	store.save(operationStateSnapshot{
+		operationRecord: operationRecord{
+			CreatedAt:   time.Now(),
+			OperationID: "op-close",
+			Status:      StatusRunning,
+			UserID:      "user-1",
+		},
+	})
+	for counter := 1; counter <= 5; counter++ {
+		store.queueCounter("op-close", counter)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	reopened, err := openOperationStateDB(dbPath)
+	if err != nil {
+		t.Fatalf("reopen state DB failed: %v", err)
+	}
+	defer reopened.Close()
+	var counter int
+	if err := reopened.QueryRow(`SELECT event_counter FROM operation_state WHERE id = ?`, "op-close").Scan(&counter); err != nil {
+		t.Fatalf("read counter after close failed: %v", err)
+	}
+	if counter != 5 {
+		t.Fatalf("counter after Close = %d, want 5", counter)
+	}
+}
+
+func TestServerCloseRejectsNewOperationWrites(t *testing.T) {
+	srv, ts := testStateServer(t)
+	if err := srv.Close(); err != nil {
+		t.Fatalf("Server.Close failed: %v", err)
+	}
+	postJSON(t, ts.URL+"/api/operations/init", map[string]any{
+		"operationId": "op-after-close",
+		"userId":      "user-1",
+	}, http.StatusServiceUnavailable)
+}
+
+func TestOperationStateStoreCloseIsSafeWhenDBUnavailable(t *testing.T) {
+	store := &operationStateStore{
+		db:          nil,
+		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		pending:     map[string]int{"op-broken": 7},
+		closed:      make(chan struct{}),
+		closing:     make(chan struct{}),
+		cleanupDone: make(chan struct{}),
+	}
+	close(store.cleanupDone)
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close with unavailable DB should not fail: %v", err)
+	}
+}
+
 func TestOperationStateNewOperationWithoutRecord(t *testing.T) {
 	srv := NewServer(Config{ServiceToken: "service-token"})
 	srv.stateStore = testStateStore(t)

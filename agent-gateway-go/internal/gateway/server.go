@@ -25,6 +25,8 @@ type Server struct {
 	authTimeout      time.Duration
 	cfg              Config
 	cleanupDelay     time.Duration
+	closeOnce        sync.Once
+	closed           bool
 	heartbeatTimeout time.Duration
 	operations       map[string]*operation
 	operationsMu     sync.Mutex
@@ -59,6 +61,29 @@ func (s *Server) Routes() http.Handler {
 	})
 	mux.HandleFunc("/api/operations/", s.handleOperations)
 	return logRequests(mux, s.cfg.RequestLogging)
+}
+
+// acceptingOperations reports whether new operations may still be created.
+// It is checked at HTTP/WebSocket entry points during graceful shutdown.
+func (s *Server) acceptingOperations() bool {
+	s.operationsMu.Lock()
+	defer s.operationsMu.Unlock()
+	return !s.closed
+}
+
+// Close stops operation writes and flushes/closes the persistent state store.
+// HTTP listeners must be shut down by the caller before calling Close.
+func (s *Server) Close() error {
+	var err error
+	s.closeOnce.Do(func() {
+		s.operationsMu.Lock()
+		s.closed = true
+		s.operationsMu.Unlock()
+		if s.stateStore != nil {
+			err = s.stateStore.Close()
+		}
+	})
+	return err
 }
 
 func (s *Server) getOrCreateOperation(operationID string) *operation {
@@ -102,6 +127,10 @@ func (s *Server) withServiceAuth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	if !s.acceptingOperations() {
+		writeText(w, http.StatusServiceUnavailable, "Server shutting down")
+		return
+	}
 	operationID := r.URL.Query().Get("operationId")
 	if operationID == "" {
 		writeText(w, http.StatusBadRequest, "Missing operationId")
@@ -119,6 +148,10 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOperations(w http.ResponseWriter, r *http.Request) {
+	if !s.acceptingOperations() {
+		writeText(w, http.StatusServiceUnavailable, "Server shutting down")
+		return
+	}
 	if s.cfg.ServiceToken == "" || r.Header.Get("Authorization") != "Bearer "+s.cfg.ServiceToken {
 		writeText(w, http.StatusUnauthorized, "Unauthorized")
 		return

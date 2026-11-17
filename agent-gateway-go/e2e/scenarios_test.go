@@ -5,10 +5,13 @@
 package e2e
 
 import (
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 // stateStoreFlushInterval 与生产实现里的批量落盘间隔一致，场景 C 用它
@@ -105,8 +108,10 @@ func pushN(t *testing.T, port string, opID string, n int, prefix string) {
 
 // 场景 A：运行中重启，客户端序号超前。
 // init → 推 3 条事件 → 客户端订阅并收齐，记下 lastEventId → 杀进程 →
-// 重启 → 用同一个 lastEventId 重新 subscribe → 断言 gap=true → 继续推
-// 新事件，断言客户端能收到（证明没有被 id <= lastSeq 过滤掉）。
+// 重启 → 用一个大于已刷盘 counter 的 lastEventId 重新 subscribe →
+// 断言 gap=true → 继续推新事件，断言客户端能收到（证明没有被
+// id <= lastSeq 过滤掉）。SIGTERM 修复后 lastEventId 不再天然超前，
+// 所以这里显式报告一个超前游标来保持场景语义。
 func TestE2E_A_RestartAheadClientGetsGap(t *testing.T) {
 	runScenario(t, scenarioOptions{
 		name: "ahead-client",
@@ -120,7 +125,9 @@ func TestE2E_A_RestartAheadClientGetsGap(t *testing.T) {
 				t.Fatalf("首个进程应重放 3 条事件，实际收到 ids=%v", ids)
 			}
 			sub.ws.close()
-			return fmt.Sprintf("%d", ids[len(ids)-1])
+			// 显式报告超前序号：3 条事件的 counter 已由 SIGTERM 刷盘，
+			// 用 99 模拟客户端见过更新 gateway 的事件。
+			return "99"
 		},
 		restartRun: func(t *testing.T, port string, opID string, lastEventID string, signer *jwtSigner) {
 			sub := subscribe(t, port, opID, lastEventID, signer)
@@ -181,10 +188,8 @@ func TestE2E_B_TerminalStatusSurvivesRestart(t *testing.T) {
 // status 不是 waiting_for_human，且 event_counter 已恢复（后续推事件的
 // id 接着之前的编号，不回到 1）。
 //
-// 已知边界：SIGTERM 优雅退出不会 flush 计数器（200ms 批量落盘定时器随
-// 进程退出丢失），init 阶段同步落盘的 counter=0 成为最后状态。这是这套
-// e2e 要暴露的真实缺陷，场景 C 因此断言重启后 id 不回绕到与旧序号冲突
-// 之前的值 —— 当前实现下本场景会失败，作为回归门禁留给修复。
+// 场景 C 与场景 L 的区别：C 显式等过 flush 窗口，验证恢复后的序号延续；
+// L 不等窗口，直接验证 SIGTERM 路径会把最后一批 pending 计数器刷盘。
 func TestE2E_C_RunningStatusDoesNotLie(t *testing.T) {
 	runScenario(t, scenarioOptions{
 		name: "running-no-lie",
@@ -236,4 +241,44 @@ func TestE2E_D_NormalPathOrderedDelivery(t *testing.T) {
 		}
 	}
 	proc.stop(t)
+}
+
+// 场景 L（LOBE-187）：SIGTERM 退出时刷盘计数器。
+// 推 N 条事件后立刻发 SIGTERM（不等 200ms 批量 flush），等进程退出后
+// 直接读 SQLite：operation_state.event_counter 必须等于 N。再启动新进程，
+// 订阅并重放时事件 id 必须接着 N，不能从旧值回绕。
+func TestE2E_L_SIGTERMFlushesCounter(t *testing.T) {
+	dir := runDir(t)
+	dbPath := filepath.Join(dir, "state.db")
+	port := freePort(t)
+	signer := newJWTSigner(t)
+	opID := "e2e-sigterm-flush"
+	const total = 5
+
+	first := startGateway(t, dbPath, port, signer.jwks(), filepath.Join(dir, "gateway-1.log"))
+	initOperation(t, port, opID)
+	pushN(t, port, opID, total, "sigterm")
+	first.stop(t)
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("场景L失败：打开状态库失败 (db=%s): %v", dbPath, err)
+	}
+	defer db.Close()
+	var counter int
+	if err := db.QueryRow(`SELECT event_counter FROM operation_state WHERE id = ?`, opID).Scan(&counter); err != nil {
+		t.Fatalf("场景L失败：读取 event_counter 失败 (db=%s): %v", dbPath, err)
+	}
+	if counter != total {
+		t.Fatalf("场景L失败：SIGTERM 后 event_counter 应为 %d，实际 %d (db=%s)", total, counter, dbPath)
+	}
+
+	second := startGateway(t, dbPath, port, signer.jwks(), filepath.Join(dir, "gateway-2.log"))
+	defer second.stop(t)
+	sub := subscribe(t, second.port, opID, "0", signer)
+	pushEvent(t, second.port, opID, "after-sigterm")
+	ids := append(replayedEventIDs(sub), collectEvents(t, sub.ws, 1)...)
+	if len(ids) == 0 || ids[len(ids)-1] != total+1 {
+		t.Fatalf("场景L失败：重启后新事件 id 应为 %d（counter=%d），实际 ids=%v (db=%s)", total+1, counter, ids, dbPath)
+	}
 }

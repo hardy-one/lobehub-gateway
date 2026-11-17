@@ -394,12 +394,12 @@ func TestE2E_H_DirtyLastEventId(t *testing.T) {
 // SIGTERM 停止（内存对象消失）+ 直接删除 SQLite 行（cleanup 的另一半），
 // 重启后带旧游标订阅 = cleanup 后重订阅。
 //
-// 期望（任务原文）：gateway 新建空 operation，返回 gap=true，不崩溃。
+// 期望（LOBE-186 复核后的条件式 gap）：gateway 新建空 operation；客户端
+// 带旧游标（since > 0）时必须返回 gap=true，不崩溃。全新订阅（since=0）
+// 才保持 gap=false（由生产单测覆盖）。
 //
-// 缺陷修复记录：[LOBE-186-DEFECT-2]（v2 owner=="" 分支返回 gap:false
-// pending:true）已通过把该分支的 gap 改为 true 修复，生产单测
-// TestV2PendingSubscribeLifecycleAndOwnership 同步更新。本场景按任务原文
-// 断言 gap=true，且断言不崩溃：init 后 pending 订阅仍被提升、新事件可达。
+// 生产实现：v2 owner=="" 分支按 since > 0 返回 gap。生产单测
+// TestV2PendingSubscribeGapDependsOnCursor 覆盖 since=0 / since>0 两种情形。
 func TestE2E_I_ResubscribeAfterCleanup(t *testing.T) {
 	dir := runDir(t)
 	dbPath := filepath.Join(dir, "state.db")
@@ -459,10 +459,8 @@ func TestE2E_J_MultiOperationRestore(t *testing.T) {
 	})
 	initOperation(t, first.port, opRunning)
 	pushN(t, first.port, opRunning, 2, "r")
-	// 不 sleep：running 无同步终态落盘，init 时的同步 save（counter=0）
-	// 成为最后落盘值，2 条事件的计数器留在 200ms 批量 flush 队列里，
-	// SIGTERM 退出即丢失 —— 这正是本场景要暴露的计数器偏小边界，
-	// 与 LOBE-185 场景 C 一致。重启后新事件 id 会回到 1，行为如实断言。
+	// 不 sleep：running 的 2 条事件计数器靠 SIGTERM 优雅退出刷盘，
+	// 重启后 counter=2，新事件 id 应从 3 接着编号。
 	initOperation(t, first.port, opWaiting)
 	pushN(t, first.port, opWaiting, 1, "w")
 	postOperation(t, first.port, "/api/operations/update-status", map[string]any{
@@ -483,13 +481,12 @@ func TestE2E_J_MultiOperationRestore(t *testing.T) {
 		t.Fatalf("场景J失败：running 的 operation 重启后 status 应为空，实际: %v", subR.complete)
 	}
 	// gap=true 时游标回绕，旧缓冲事件（重启后 buffer 为空则无）先重放，
-	// 再收新事件。running 落盘 counter=0（init 同步 save 后批量 flush
-	// 未及落盘），重启后新事件 id 回到 1 —— 计数器偏小是任务明确允许的
-	// 行为，关键是三者各自独立、不串号。
+	// 再收新事件。running 落盘 counter=2，重启后新事件 id 为 3；
+	// 关键是三者各自独立、不串号。
 	pushEvent(t, second.port, opRunning, "resume-r")
 	idsR := collectEvents(t, subR.ws, 1)
-	if len(idsR) != 1 || idsR[0] != 1 {
-		t.Fatalf("场景J失败：running 重启后新事件 id 应为 1（落盘 counter=0，偏小允许），(db=%s)，实际 ids=%v", dbPath, idsR)
+	if len(idsR) != 1 || idsR[0] != 3 {
+		t.Fatalf("场景J失败：running 重启后新事件 id 应为 3（SIGTERM 已刷盘 counter=2），(db=%s)，实际 ids=%v", dbPath, idsR)
 	}
 
 	subW := subscribe(t, second.port, opWaiting, "0", signer)
@@ -498,10 +495,10 @@ func TestE2E_J_MultiOperationRestore(t *testing.T) {
 	}
 	pushEvent(t, second.port, opWaiting, "resume-w")
 	idsW := collectEvents(t, subW.ws, 1)
-	// waiting 落盘 counter=1（1 事件后 update-status 在 nextEventID 前
-	// 同步 flush），新事件 id 应为 2，接续自己的落盘值，不与 running 串号。
-	if len(idsW) != 1 || idsW[0] != 2 {
-		t.Fatalf("场景J失败：waiting 的 counter 应独立恢复（新事件 id 应为 2），(db=%s)，实际 ids=%v", dbPath, idsW)
+	// waiting 落盘 counter=2（1 条事件 + update-status 的事件 id 都由
+	// SIGTERM 刷盘），新事件 id 应为 3，接续自己的落盘值，不与 running 串号。
+	if len(idsW) != 1 || idsW[0] != 3 {
+		t.Fatalf("场景J失败：waiting 的 counter 应独立恢复（新事件 id 应为 3），(db=%s)，实际 ids=%v", dbPath, idsW)
 	}
 }
 
@@ -574,14 +571,14 @@ func TestE2E_K_V1V2SimultaneousSubscribe(t *testing.T) {
 	// 先跳过可能迟到的 resume_complete 再收事件。
 	pushEvent(t, second.port, opID, "after-both")
 	eventV2 := readUntil(t, subV2.ws, isAgentEvent)
-	if idV2 := eventID(eventV2); idV2 != 3 {
-		t.Fatalf("场景K失败：v2 新事件 id 应为 3，实际: %v", eventV2)
+	if idV2 := eventID(eventV2); idV2 != 4 {
+		t.Fatalf("场景K失败：v2 新事件 id 应为 4（SIGTERM 已刷盘 counter=3），实际: %v", eventV2)
 	}
 	// v1 端在 resume 之后也会收到该事件的直播投递
 	eventV1 := readUntil(t, v1, func(m map[string]any) bool {
 		return isAgentEvent(m)
 	})
-	if idV1 := eventID(eventV1); idV1 != 3 {
-		t.Fatalf("场景K失败：v1 新事件 id 应为 3，实际: %v", eventV1)
+	if idV1 := eventID(eventV1); idV1 != 4 {
+		t.Fatalf("场景K失败：v1 新事件 id 应为 4，实际: %v", eventV1)
 	}
 }

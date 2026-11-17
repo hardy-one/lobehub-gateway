@@ -42,7 +42,9 @@ func main() {
 		defer cancel()
 		if err := httpServer.Shutdown(ctx); err != nil {
 			slog.Error("shutdown failed", "error", err)
-			os.Exit(1)
+		}
+		if err := srv.Close(); err != nil {
+			slog.Error("state store close failed", "error", err)
 		}
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -50,4 +52,5 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	srv.Close()
 }
