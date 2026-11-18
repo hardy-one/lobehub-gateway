@@ -151,7 +151,13 @@ func (s *Server) handleLLM(w http.ResponseWriter, r *http.Request, body operatio
 		connections = op.llmConnectionsLocked(data.PreferredClientID)
 	}
 	hubDelivered := op.queueHubEventLocked(message)
+	operationID := op.record.OperationID
 	op.mu.Unlock()
+	op.server.log.Debug("event pushed",
+		"operationId", operationID,
+		"eventType", eventType,
+		"eventId", id,
+	)
 	delivered := 0
 	for _, conn := range connections {
 		if conn.writeJSON(message) == nil && !conn.isAdmin() {

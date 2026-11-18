@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -210,12 +211,37 @@ func TestE2E_B_TerminalStatusSurvivesRestart(t *testing.T) {
 				text string
 			}{
 				{firstLog, `state store enabled`},
+				{firstLog, `operation started`},
+				{firstLog, `operation finished`},
 				{secondLog, `operation state restored`},
 				{secondLog, `terminal operation restored`},
 			} {
 				if !logContains(t, entry.path, entry.text) {
 					t.Errorf("场景B日志缺少 %q\n日志尾部:\n%s", entry.text, tailFile(entry.path, 40))
 				}
+			}
+			logLines := strings.Split(strings.TrimSpace(tailFile(firstLog, 200)), "\n")
+			var startLine, finishLine string
+			for _, line := range logLines {
+				if strings.Contains(line, `operation started`) {
+					startLine = line
+				}
+				if strings.Contains(line, `operation finished`) {
+					finishLine = line
+				}
+			}
+			for name, line := range map[string]string{"started": startLine, "finished": finishLine} {
+				if !strings.HasPrefix(line, "[agent] ") {
+					t.Errorf("场景B %s 日志缺少服务前缀 [agent]: %s", name, line)
+				}
+			}
+			operationID := "e2e-" + sanitize("terminal-status")
+			if !strings.Contains(startLine, `operationId=`+operationID) ||
+				!strings.Contains(finishLine, `operationId=`+operationID) {
+				t.Errorf("场景B started/finished operationId 不一致:\n%s\n%s", startLine, finishLine)
+			}
+			if !strings.Contains(finishLine, `status=completed`) || !strings.Contains(finishLine, `eventCount=3`) {
+				t.Errorf("场景B operation finished 字段不完整:\n%s", finishLine)
 			}
 		},
 	})

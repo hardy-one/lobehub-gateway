@@ -116,9 +116,7 @@ func (c *hubConnection) readLoop() {
 			}
 			c.subscribe(msg.OperationID, msg.LastEventID, msg.Executor)
 		case "unsubscribe":
-			c.mu.Lock()
-			delete(c.subs, envelope.OperationID)
-			c.mu.Unlock()
+			c.dropSubscription(envelope.OperationID)
 		case "tool_result", "tool_confirmation", "user_input", "interrupt":
 			c.forwardClientMessage(envelope.OperationID, payload)
 		default:
@@ -135,6 +133,12 @@ func (c *hubConnection) subscribe(operationID string, lastEventID string, execut
 		state:    "replaying",
 	}
 	c.mu.Unlock()
+	c.server.log.Debug("client subscribed",
+		"operationId", operationID,
+		"clientId", c.clientID,
+		"userId", c.userID,
+		"executor", executor,
+	)
 	c.completeSubscribe(operationID)
 }
 
@@ -433,8 +437,18 @@ func (c *hubConnection) deliverLocked(operationID string, sub *hubSubscription, 
 
 func (c *hubConnection) dropSubscription(operationID string) {
 	c.mu.Lock()
+	sub := c.subs[operationID]
 	delete(c.subs, operationID)
 	c.mu.Unlock()
+	if sub == nil {
+		return
+	}
+	c.server.log.Debug("client unsubscribed",
+		"operationId", operationID,
+		"clientId", c.clientID,
+		"userId", c.userID,
+		"executor", sub.executor,
+	)
 }
 
 func (c *hubConnection) sendError(code string, message string, operationID string) {
@@ -483,8 +497,17 @@ func (c *hubConnection) close(code int, reason string) {
 	if c.heartbeat != nil {
 		c.heartbeat.Stop()
 	}
+	subs := c.subs
 	c.subs = map[string]*hubSubscription{}
 	c.mu.Unlock()
+	for operationID, sub := range subs {
+		c.server.log.Debug("client unsubscribed",
+			"operationId", operationID,
+			"clientId", c.clientID,
+			"userId", c.userID,
+			"executor", sub.executor,
+		)
+	}
 	if reason != "" {
 		_ = c.ws.writeClose(code, reason)
 	}

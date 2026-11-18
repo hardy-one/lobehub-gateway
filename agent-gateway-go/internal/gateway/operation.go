@@ -54,6 +54,9 @@ type operation struct {
 	record       operationRecord
 	watchdog     *time.Timer
 	openLLM      map[string]openLLMCall
+	startedAt    time.Time
+	startLogged  bool
+	finishLogged bool
 }
 
 func newOperation(server *Server, operationID string) *operation {
@@ -116,6 +119,17 @@ func (o *operation) snapshotStateLocked() operationStateSnapshot {
 
 func (o *operation) init(operationID string, userID string, meta *operationMeta) {
 	o.mu.Lock()
+	logStart := !o.startLogged
+	o.startLogged = true
+	var sourceAttrs []any
+	if meta != nil {
+		if meta.HeteroType != "" {
+			sourceAttrs = append(sourceAttrs, "heteroType", meta.HeteroType)
+		}
+		if meta.AgentID != "" {
+			sourceAttrs = append(sourceAttrs, "agentId", meta.AgentID)
+		}
+	}
 	o.record.OperationID = operationID
 	o.record.UserID = userID
 	o.record.Status = StatusRunning
@@ -132,12 +146,17 @@ func (o *operation) init(operationID string, userID string, meta *operationMeta)
 	o.stopCleanupLocked()
 	o.lastEventAt = time.Now()
 	o.lastEventTyp = "operation_init"
+	o.startedAt = o.record.CreatedAt
 	o.scheduleWatchdogLocked()
 	connections := make([]*operationConnection, 0, len(o.connections))
 	for conn := range o.connections {
 		connections = append(connections, conn)
 	}
 	o.mu.Unlock()
+	if logStart {
+		attrs := append([]any{"operationId", operationID, "userId", userID}, sourceAttrs...)
+		o.server.log.Info("operation started", attrs...)
+	}
 	for _, conn := range connections {
 		conn.verifyPendingOwner(userID)
 	}
@@ -191,6 +210,7 @@ func (o *operation) nextEventIDLocked() string {
 func (o *operation) pushEvent(event agentStreamEvent) {
 	msg := map[string]any{"event": event, "type": "agent_event"}
 	o.mu.Lock()
+	operationID := o.record.OperationID
 	id := o.nextEventIDLocked()
 	msg["id"] = id
 	o.bufferLocked(id, msg)
@@ -200,6 +220,11 @@ func (o *operation) pushEvent(event agentStreamEvent) {
 	connections := o.authenticatedConnectionsLocked()
 	o.queueHubEventLocked(msg)
 	o.mu.Unlock()
+	o.server.log.Debug("event pushed",
+		"operationId", operationID,
+		"eventType", event.Type,
+		"eventId", id,
+	)
 	if event.Type != "message_patch" {
 		broadcast(connections, msg)
 	}
@@ -212,6 +237,7 @@ func (o *operation) pushEvent(event agentStreamEvent) {
 func (o *operation) broadcastToolExecute(event agentStreamEvent) {
 	msg := map[string]any{"event": event, "type": "agent_event"}
 	o.mu.Lock()
+	operationID := o.record.OperationID
 	id := o.nextEventIDLocked()
 	msg["id"] = id
 	o.bufferLocked(id, msg)
@@ -221,6 +247,11 @@ func (o *operation) broadcastToolExecute(event agentStreamEvent) {
 	connections := o.authenticatedConnectionsLocked()
 	o.queueHubEventLocked(msg)
 	o.mu.Unlock()
+	o.server.log.Debug("event pushed",
+		"operationId", operationID,
+		"eventType", event.Type,
+		"eventId", id,
+	)
 	broadcast(connections, msg)
 }
 
@@ -253,6 +284,7 @@ func (o *operation) handleSessionEnd(status SessionStatus, summary string) {
 	o.mu.Unlock()
 	broadcast(connections, msg)
 	o.server.notifyLifecycle(o, status, summary)
+	o.logFinished(status)
 }
 
 func (o *operation) updateStatus(status SessionStatus, summary string) {
@@ -281,6 +313,7 @@ func (o *operation) updateStatus(status SessionStatus, summary string) {
 	o.mu.Unlock()
 	broadcast(connections, msg)
 	o.server.notifyLifecycle(o, status, summary)
+	o.logFinished(status)
 }
 
 func (o *operation) requestConfirmation(toolCallID string, tool toolCallInfo, timeout time.Duration) (bool, bool) {
@@ -593,6 +626,31 @@ func (o *operation) fireWatchdog() {
 	o.mu.Unlock()
 	broadcast(connections, msg)
 	o.server.notifyLifecycle(o, status, summary)
+	o.logFinished(status)
+}
+
+func (o *operation) logFinished(status SessionStatus) {
+	if !isTerminalStatus(status) {
+		return
+	}
+	o.mu.Lock()
+	if o.finishLogged {
+		o.mu.Unlock()
+		return
+	}
+	o.finishLogged = true
+	startedAt := o.startedAt
+	if startedAt.IsZero() {
+		startedAt = o.record.CreatedAt
+	}
+	attrs := []any{
+		"operationId", o.record.OperationID,
+		"status", status,
+		"eventCount", o.eventCounter,
+		"durationMs", time.Since(startedAt).Milliseconds(),
+	}
+	o.mu.Unlock()
+	o.server.log.Info("operation finished", attrs...)
 }
 
 func (o *operation) callFinalizeAbandoned(operationID string, reason string) (finalizeAbandonedResult, bool) {
