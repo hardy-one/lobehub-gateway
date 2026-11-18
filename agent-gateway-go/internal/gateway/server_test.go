@@ -21,7 +21,7 @@ import (
 )
 
 func testServer() (*Server, *httptest.Server) {
-	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: "http://127.0.0.1:1"})
+	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: "http://127.0.0.1:1"}, nil)
 	srv.authTimeout = time.Second
 	srv.heartbeatTimeout = time.Second
 	srv.cleanupDelay = time.Second
@@ -218,7 +218,7 @@ func TestForwardToolResultPreservesStateAndOmitsAbsentOptionalFields(t *testing.
 	}))
 	defer callback.Close()
 
-	srv := NewServer(Config{LobeAPIBaseURL: callback.URL, ServiceToken: "service-token"})
+	srv := NewServer(Config{LobeAPIBaseURL: callback.URL, ServiceToken: "service-token"}, nil)
 	op := newOperation(srv, "op-tool-result")
 	op.forwardToolResult(toolResultMessage{
 		Content:    ptr("done"),
@@ -242,7 +242,7 @@ func ptr(value string) *string { return &value }
 
 func TestWebSocketJWTClaimValidation(t *testing.T) {
 	jwks, signJWT := testJWTSigner(t)
-	srv := NewServer(Config{JWKSPublicKey: jwks, LobeAPIBaseURL: "http://127.0.0.1:1", ServiceToken: "service-token"})
+	srv := NewServer(Config{JWKSPublicKey: jwks, LobeAPIBaseURL: "http://127.0.0.1:1", ServiceToken: "service-token"}, nil)
 	srv.authTimeout = time.Second
 	httpSrv := httptest.NewServer(srv.Routes())
 	defer httpSrv.Close()
@@ -329,7 +329,7 @@ func TestInactivityWatchdogReconcilesPhantomTimeout(t *testing.T) {
 	}))
 	defer finalizeSrv.Close()
 
-	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: finalizeSrv.URL})
+	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: finalizeSrv.URL}, nil)
 	srv.cleanupDelay = time.Second
 	httpSrv := httptest.NewServer(srv.Routes())
 	defer httpSrv.Close()
@@ -363,7 +363,7 @@ func TestInactivityWatchdogReportsAbandonedTimeout(t *testing.T) {
 	}))
 	defer finalizeSrv.Close()
 
-	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: finalizeSrv.URL})
+	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: finalizeSrv.URL}, nil)
 	srv.cleanupDelay = time.Second
 	httpSrv := httptest.NewServer(srv.Routes())
 	defer httpSrv.Close()
@@ -401,7 +401,7 @@ func TestInactivityWatchdogRechecksRecentEventsAfterFinalize(t *testing.T) {
 	}))
 	defer finalizeSrv.Close()
 
-	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: finalizeSrv.URL})
+	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: finalizeSrv.URL}, nil)
 	srv.cleanupDelay = time.Second
 	httpSrv := httptest.NewServer(srv.Routes())
 	defer httpSrv.Close()

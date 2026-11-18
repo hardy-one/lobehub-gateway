@@ -30,13 +30,10 @@ func (s *syncBuffer) String() string {
 	return s.b.String()
 }
 
-func withCapturedLogs(t *testing.T) (*syncBuffer, func()) {
+func withCapturedLogs(t *testing.T) (*syncBuffer, *slog.Logger) {
 	t.Helper()
 	buf := &syncBuffer{}
-	handler := slog.New(slog.NewJSONHandler(buf, nil))
-	prev := slog.Default()
-	slog.SetDefault(handler)
-	return buf, func() { slog.SetDefault(prev) }
+	return buf, slog.New(slog.NewJSONHandler(buf, nil))
 }
 
 // waitForLog polls until all substrings appear in the captured logs, since
@@ -67,16 +64,15 @@ func waitForLog(t *testing.T, logs *syncBuffer, wants ...string) {
 	}
 }
 
-func testDeviceServer() *httptest.Server {
-	srv := NewServer(Config{ServiceToken: "service-token", RequestLogging: true})
+func testDeviceServer(log *slog.Logger) *httptest.Server {
+	srv := NewServer(Config{ServiceToken: "service-token", RequestLogging: true}, log)
 	return httptest.NewServer(srv.Routes())
 }
 
 func TestRequestLoggingSuccess(t *testing.T) {
-	logs, restore := withCapturedLogs(t)
-	defer restore()
+	logs, logger := withCapturedLogs(t)
 
-	ts := testDeviceServer()
+	ts := testDeviceServer(logger)
 	defer ts.Close()
 
 	req, err := http.NewRequest(http.MethodGet, ts.URL+"/health", nil)
@@ -108,10 +104,9 @@ func TestRequestLoggingSuccess(t *testing.T) {
 }
 
 func TestRequestLoggingFailure(t *testing.T) {
-	logs, restore := withCapturedLogs(t)
-	defer restore()
+	logs, logger := withCapturedLogs(t)
 
-	ts := testDeviceServer()
+	ts := testDeviceServer(logger)
 	defer ts.Close()
 
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/device/status", strings.NewReader(`{"userId":"u1"}`))
@@ -137,10 +132,9 @@ func TestRequestLoggingFailure(t *testing.T) {
 }
 
 func TestRequestLoggingDisabledByDefault(t *testing.T) {
-	logs, restore := withCapturedLogs(t)
-	defer restore()
+	logs, logger := withCapturedLogs(t)
 
-	srv := NewServer(Config{ServiceToken: "service-token"})
+	srv := NewServer(Config{ServiceToken: "service-token"}, logger)
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 

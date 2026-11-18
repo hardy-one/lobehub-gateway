@@ -22,7 +22,7 @@ func newV2TestServer(t *testing.T) (*Server, *httptest.Server, func(string, time
 		JWKSPublicKey:  jwks,
 		LobeAPIBaseURL: "http://127.0.0.1:1",
 		ServiceToken:   "service-token",
-	})
+	}, nil)
 	srv.cleanupDelay = time.Second
 	return srv, httptest.NewServer(srv.Routes()), signJWT
 }
@@ -212,7 +212,7 @@ func TestV2PendingSubscribeLifecycleAndOwnership(t *testing.T) {
 }
 
 func TestInitWithoutMetaPreservesExistingMetadata(t *testing.T) {
-	srv := NewServer(Config{ServiceToken: "service-token"})
+	srv := NewServer(Config{ServiceToken: "service-token"}, nil)
 	op := srv.getOrCreateOperation("meta-retry")
 	op.init("meta-retry", "user-1", &operationMeta{AgentID: "agent-1", TopicID: "topic-1"})
 	op.init("meta-retry", "user-1", nil)
@@ -277,7 +277,7 @@ func TestMessagePatchIsV2Only(t *testing.T) {
 }
 
 func TestReplayReportsTrimmedGap(t *testing.T) {
-	srv := NewServer(Config{ServiceToken: "service-token"})
+	srv := NewServer(Config{ServiceToken: "service-token"}, nil)
 	op := srv.getOrCreateOperation("gap-op")
 	op.init("gap-op", "user-1", nil)
 	for i := 0; i < eventBufferMax+1; i++ {
@@ -336,7 +336,7 @@ func TestV2PendingSubscriptionForwardsClientMessages(t *testing.T) {
 	defer backend.Close()
 
 	jwks, signJWT := testJWTSigner(t)
-	srv := NewServer(Config{JWKSPublicKey: jwks, LobeAPIBaseURL: backend.URL, ServiceToken: "service-token"})
+	srv := NewServer(Config{JWKSPublicKey: jwks, LobeAPIBaseURL: backend.URL, ServiceToken: "service-token"}, nil)
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 
@@ -385,7 +385,7 @@ func TestV2WatchdogLifecycleIncludesSummary(t *testing.T) {
 	defer backend.Close()
 
 	jwks, signJWT := testJWTSigner(t)
-	srv := NewServer(Config{JWKSPublicKey: jwks, LobeAPIBaseURL: backend.URL, ServiceToken: "service-token"})
+	srv := NewServer(Config{JWKSPublicKey: jwks, LobeAPIBaseURL: backend.URL, ServiceToken: "service-token"}, nil)
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 	postJSON(t, ts.URL+"/api/operations/init", map[string]any{"operationId": "watchdog-lifecycle", "userId": "user-1"}, 200)
@@ -473,7 +473,7 @@ func TestV2HubQueueOverflowDisconnectsSubscribers(t *testing.T) {
 }
 
 func TestV2WriteFailureDropsConnectionWithoutAdvancingSequence(t *testing.T) {
-	srv := NewServer(Config{ServiceToken: "service-token"})
+	srv := NewServer(Config{ServiceToken: "service-token"}, nil)
 	op := srv.getOrCreateOperation("write-fail")
 	op.init("write-fail", "user-1", nil)
 
@@ -518,7 +518,7 @@ func TestV2ToolResultForwarding(t *testing.T) {
 	defer backend.Close()
 
 	jwks, signJWT := testJWTSigner(t)
-	srv := NewServer(Config{JWKSPublicKey: jwks, LobeAPIBaseURL: backend.URL, ServiceToken: "service-token"})
+	srv := NewServer(Config{JWKSPublicKey: jwks, LobeAPIBaseURL: backend.URL, ServiceToken: "service-token"}, nil)
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 	postJSON(t, ts.URL+"/api/operations/init", map[string]any{"operationId": "mux-result", "userId": "user-1"}, 200)
@@ -581,7 +581,7 @@ func TestV1OwnerIsRecheckedWhenInitRacesAuthentication(t *testing.T) {
 	}))
 	defer identity.Close()
 
-	srv := NewServer(Config{ServiceToken: "service-token"})
+	srv := NewServer(Config{ServiceToken: "service-token"}, nil)
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 	ws := dialWebSocket(t, ts.URL, "/ws?operationId=auth-init-race")
@@ -611,7 +611,7 @@ func TestV1OwnerIsRecheckedWhenInitRacesAuthentication(t *testing.T) {
 }
 
 func TestWatchdogWindowIsFixedPerRun(t *testing.T) {
-	op := newOperation(NewServer(Config{}), "watchdog")
+	op := newOperation(NewServer(Config{}, nil), "watchdog")
 	for _, typ := range []string{"operation_init", "tool_execute", "step_complete", "status_change", "stream_end"} {
 		op.lastEventTyp = typ
 		if op.watchdogTimeoutLocked() != 30*time.Minute {

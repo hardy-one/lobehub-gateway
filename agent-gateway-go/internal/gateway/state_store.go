@@ -45,11 +45,20 @@ func newOperationStateStore(path string, logger *slog.Logger) *operationStateSto
 }
 
 func newOperationStateStoreWithPath(path string, logger *slog.Logger) *operationStateStore {
+	started := time.Now()
 	db, err := openOperationStateDB(path)
 	if err != nil {
-		logger.Warn("operation state persistence disabled", "path", path, "error", err)
+		logger.Warn("state store degraded to in-memory mode",
+			"path", path,
+			"reason", err.Error(),
+			"error", err,
+		)
 		return nil
 	}
+	logger.Info("state store enabled",
+		"path", path,
+		"openDurationMs", time.Since(started).Milliseconds(),
+	)
 	store := &operationStateStore{
 		db:          db,
 		logger:      logger,
@@ -66,10 +75,14 @@ func newOperationStateStoreWithPath(path string, logger *slog.Logger) *operation
 // database. It is safe to call more than once and returns within
 // stateStoreCloseTimeout even when a write is stuck.
 func (s *operationStateStore) Close() error {
+	flushed := 0
 	s.closeOnce.Do(func() {
 		close(s.closing)
 		<-s.cleanupDone
 		if s.db != nil {
+			s.flushMu.Lock()
+			flushed = len(s.pending)
+			s.flushMu.Unlock()
 			done := make(chan struct{})
 			go func() {
 				s.flushCounters(nil)
@@ -80,7 +93,12 @@ func (s *operationStateStore) Close() error {
 			case <-time.After(stateStoreCloseTimeout):
 				s.logger.Warn("operation state counter flush timed out during close")
 			}
-			_ = s.db.Close()
+			closeErr := s.db.Close()
+			s.logger.Info("state store closed",
+				"flushedCounters", flushed,
+				"databaseClosed", closeErr == nil,
+				"error", closeErr,
+			)
 		}
 		close(s.closed)
 	})
@@ -223,6 +241,14 @@ func (s *operationStateStore) delete(operationID string) {
 	if _, err := s.db.Exec(`DELETE FROM operation_state WHERE id = ?`, operationID); err != nil {
 		s.logger.Warn("failed to delete operation state", "operationId", operationID, "error", err)
 	}
+}
+
+// remove deletes a persisted operation row and logs the cleanup at debug
+// level. It is called only when the operation has already been removed from
+// memory by the caller.
+func (s *operationStateStore) remove(operationID string) {
+	s.logger.Debug("operation state removed", "operationId", operationID)
+	s.delete(operationID)
 }
 
 func (s *operationStateStore) cleanupLoop() {

@@ -23,7 +23,7 @@ import (
 
 func lobiStateServer(t *testing.T, dbPath string) (*Server, *httptest.Server) {
 	t.Helper()
-	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: "http://127.0.0.1:1"})
+	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: "http://127.0.0.1:1"}, nil)
 	if dbPath != "" {
 		srv.stateStore = newOperationStateStoreWithPath(dbPath, slog.New(slog.NewTextHandler(io.Discard, nil)))
 		if srv.stateStore != nil {
@@ -43,7 +43,7 @@ func lobiStateServer(t *testing.T, dbPath string) (*Server, *httptest.Server) {
 
 func lobiV2Server(t *testing.T, dbPath string, jwks string, signJWT func(string, time.Time, time.Time) string) (*Server, *httptest.Server) {
 	t.Helper()
-	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: "http://127.0.0.1:1", JWKSPublicKey: jwks})
+	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: "http://127.0.0.1:1", JWKSPublicKey: jwks}, nil)
 	if dbPath != "" {
 		srv.stateStore = newOperationStateStoreWithPath(dbPath, slog.New(slog.NewTextHandler(io.Discard, nil)))
 		if srv.stateStore != nil {
@@ -209,7 +209,7 @@ func TestLobiUnwritableSQLitePathStillStarts(t *testing.T) {
 	if store != nil {
 		t.Fatal("expected nil store for unwritable SQLite path")
 	}
-	srv := NewServer(Config{ServiceToken: "service-token"})
+	srv := NewServer(Config{ServiceToken: "service-token"}, nil)
 	srv.stateStore = store
 	op := srv.getOrCreateOperation("op-lobi-degraded")
 	op.init("op-lobi-degraded", "user-1", nil)

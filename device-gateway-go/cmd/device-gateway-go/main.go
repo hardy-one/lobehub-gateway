@@ -3,22 +3,24 @@ package main
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/lobehub/lobehub/apps/device-gateway-go/internal/gateway"
+	"github.com/lobehub/lobehub/apps/gatewaylog"
 )
 
 func main() {
+	handler := gatewaylog.DefaultLevelLogger()
+	log := gatewaylog.NewServiceLogger(handler, "device")
 	cfg := gateway.ConfigFromEnv()
 	if err := cfg.Validate(); err != nil {
-		slog.Error("invalid configuration", "error", err)
+		log.Error("invalid configuration", "error", err)
 		os.Exit(1)
 	}
-	srv := gateway.NewServer(cfg)
+	srv := gateway.NewServer(cfg, log)
 
 	httpServer := &http.Server{
 		Addr:         ":" + cfg.Port,
@@ -29,7 +31,7 @@ func main() {
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("device gateway listening", "addr", httpServer.Addr)
+		log.Info("listening", "addr", httpServer.Addr)
 		errCh <- httpServer.ListenAndServe()
 	}()
 
@@ -41,12 +43,12 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		defer cancel()
 		if err := httpServer.Shutdown(ctx); err != nil {
-			slog.Error("shutdown failed", "error", err)
+			log.Error("shutdown failed", "error", err)
 			os.Exit(1)
 		}
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("server failed", "error", err)
+			log.Error("server failed", "error", err)
 			os.Exit(1)
 		}
 	}

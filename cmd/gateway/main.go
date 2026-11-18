@@ -13,12 +13,14 @@ import (
 	agentgateway "github.com/lobehub/lobehub/apps/agent-gateway-go"
 	asrgateway "github.com/lobehub/lobehub/apps/asr-gateway-go"
 	devicegateway "github.com/lobehub/lobehub/apps/device-gateway-go"
+	"github.com/lobehub/lobehub/apps/gatewaylog"
 	messagegateway "github.com/lobehub/lobehub/apps/message-gateway-go"
 	osscenter "github.com/lobehub/lobehub/apps/oss-center-go"
 )
 
 type service struct {
 	name     string
+	logger   *slog.Logger
 	addr     string
 	listen   func() error
 	shutdown func(context.Context) error
@@ -42,9 +44,11 @@ func main() {
 }
 
 func run() int {
+	handler := gatewaylog.DefaultLevelLogger()
+	bootLog := slog.New(handler)
 	configs, err := configsFromEnv()
 	if err != nil {
-		slog.Error("invalid configuration", "error", err)
+		bootLog.Error("invalid configuration", "error", err)
 		return 1
 	}
 
@@ -52,7 +56,7 @@ func run() int {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(stop)
 
-	return runServices(newServices(configs), stop, configs.agent.ShutdownTimeout)
+	return runServices(newServices(configs, handler), bootLog, stop, configs.agent.ShutdownTimeout)
 }
 
 func configsFromEnv() (gatewayConfigs, error) {
@@ -111,15 +115,21 @@ func configsFromEnv() (gatewayConfigs, error) {
 	}, nil
 }
 
-func newServices(configs gatewayConfigs) []service {
+func newServices(configs gatewayConfigs, handler slog.Handler) []service {
+	agentLog := gatewaylog.NewServiceLogger(handler, "agent")
+	deviceLog := gatewaylog.NewServiceLogger(handler, "device")
+	asrLog := gatewaylog.NewServiceLogger(handler, "asr")
+	messageLog := gatewaylog.NewServiceLogger(handler, "message")
+	ossLog := gatewaylog.NewServiceLogger(handler, "oss")
 	// The agent gateway owns the operation state store, so its listener alone
 	// is not the whole service: after the HTTP server stops accepting requests,
 	// Close must flush pending event counters and close SQLite. Without this
 	// hook a SIGTERM drops the last counter batch and the next process restarts
 	// event numbering from a stale value.
-	agentServer := agentgateway.NewServer(configs.agent)
+	agentServer := agentgateway.NewServer(configs.agent, agentLog)
 	agentService := newService(
 		"agent gateway",
+		agentLog,
 		configs.agent.Port,
 		agentServer.Routes(),
 		configs.agent.ReadTimeout,
@@ -138,8 +148,9 @@ func newServices(configs gatewayConfigs) []service {
 		agentService,
 		newService(
 			"device gateway",
+			deviceLog,
 			configs.device.Port,
-			devicegateway.NewServer(configs.device).Routes(),
+			devicegateway.NewServer(configs.device, deviceLog).Routes(),
 			configs.device.ReadTimeout,
 			configs.device.WriteTimeout,
 		),
@@ -148,8 +159,9 @@ func newServices(configs gatewayConfigs) []service {
 	if configs.asr != nil {
 		svcs = append(svcs, newService(
 			"asr gateway",
+			asrLog,
 			configs.asr.Port,
-			asrgateway.NewServer(*configs.asr).Routes(),
+			asrgateway.NewServer(*configs.asr, asrLog).Routes(),
 			configs.asr.ReadTimeout,
 			configs.asr.WriteTimeout,
 		))
@@ -158,10 +170,11 @@ func newServices(configs gatewayConfigs) []service {
 	// The message gateway owns background work (held connections and the
 	// connection pull), so its shutdown has to stop that before the process
 	// exits — the HTTP server alone is not the whole service.
-	messageServer := messagegateway.NewServer(configs.message)
+	messageServer := messagegateway.NewServer(configs.message, messageLog)
 	messageServer.Start()
 	messageService := newService(
 		"message gateway",
+		messageLog,
 		configs.message.Port,
 		messageServer.Routes(),
 		configs.message.ReadTimeout,
@@ -177,10 +190,11 @@ func newServices(configs gatewayConfigs) []service {
 	// oss-center owns a background convergence loop, so — like the message
 	// gateway above — its shutdown has to stop that loop, not just the listener.
 	if configs.ossCenter != nil {
-		ossCenter := osscenter.NewComponent(*configs.ossCenter, slog.Default())
+		ossCenter := osscenter.NewComponent(*configs.ossCenter, ossLog)
 		ossCenter.Start(configs.ossCenter.Oneshot)
 		ossCenterService := newService(
 			"oss center",
+			ossLog,
 			configs.ossCenter.Port,
 			ossCenter.Routes(),
 			configs.message.ReadTimeout,
@@ -197,7 +211,7 @@ func newServices(configs gatewayConfigs) []service {
 	return svcs
 }
 
-func newService(name, port string, handler http.Handler, readTimeout, writeTimeout time.Duration) service {
+func newService(name string, log *slog.Logger, port string, handler http.Handler, readTimeout, writeTimeout time.Duration) service {
 	server := &http.Server{
 		Addr:         ":" + port,
 		Handler:      handler,
@@ -206,17 +220,18 @@ func newService(name, port string, handler http.Handler, readTimeout, writeTimeo
 	}
 	return service{
 		name:     name,
+		logger:   log,
 		addr:     server.Addr,
 		listen:   server.ListenAndServe,
 		shutdown: server.Shutdown,
 	}
 }
 
-func runServices(services []service, stop <-chan os.Signal, shutdownTimeout time.Duration) int {
+func runServices(services []service, bootLog *slog.Logger, stop <-chan os.Signal, shutdownTimeout time.Duration) int {
 	errCh := make(chan serviceResult, len(services))
 	for _, svc := range services {
 		go func() {
-			slog.Info(svc.name+" listening", "addr", svc.addr)
+			serviceLog(services, svc.name).Info("listening", "addr", svc.addr)
 			errCh <- serviceResult{name: svc.name, err: svc.listen()}
 		}()
 	}
@@ -226,18 +241,18 @@ func runServices(services []service, stop <-chan os.Signal, shutdownTimeout time
 	case <-stop:
 	case result := <-errCh:
 		if result.err != nil && !errors.Is(result.err, http.ErrServerClosed) {
-			slog.Error(result.name+" failed", "error", result.err)
+			serviceLog(services, result.name).Error("failed", "error", result.err)
 			exitCode = 1
 		}
 	}
 
-	if shutdownServices(services, shutdownTimeout) {
+	if shutdownServices(services, bootLog, shutdownTimeout) {
 		exitCode = 1
 	}
 	return exitCode
 }
 
-func shutdownServices(services []service, timeout time.Duration) bool {
+func shutdownServices(services []service, bootLog *slog.Logger, timeout time.Duration) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -253,15 +268,35 @@ func shutdownServices(services []service, timeout time.Duration) bool {
 		select {
 		case result := <-results:
 			if result.err != nil {
-				slog.Error(result.name+" shutdown failed", "error", result.err)
+				serviceLog(services, result.name).Error("shutdown failed", "error", result.err)
 				failed = true
 			}
 		case <-ctx.Done():
-			slog.Error("gateway shutdown timed out", "error", ctx.Err())
+			fallbackLog(bootLog).Error("gateway shutdown timed out", "error", ctx.Err())
 			return true
 		}
 	}
 	return failed
+}
+
+func serviceLog(services []service, name string) *slog.Logger {
+	fallback := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: gatewaylog.LevelFromEnv()}))
+	for _, svc := range services {
+		if svc.name == name {
+			if svc.logger == nil {
+				return fallback
+			}
+			return svc.logger
+		}
+	}
+	return fallback
+}
+
+func fallbackLog(log *slog.Logger) *slog.Logger {
+	if log == nil {
+		return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: gatewaylog.LevelFromEnv()}))
+	}
+	return log
 }
 
 func envOrDefault(key string, fallback string) string {

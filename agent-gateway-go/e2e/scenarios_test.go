@@ -27,6 +27,8 @@ type scenarioOptions struct {
 	firstRun func(t *testing.T, port string, opID string, signer *jwtSigner) string
 	// restartRun 在重启后的进程上执行客户端断言。
 	restartRun func(t *testing.T, port string, opID string, lastEventID string, signer *jwtSigner)
+	// verifyLogs 在两轮进程都结束后检查真实日志行。
+	verifyLogs func(t *testing.T, firstLog string, secondLog string)
 }
 
 func runScenario(t *testing.T, opts scenarioOptions) {
@@ -46,6 +48,9 @@ func runScenario(t *testing.T, opts scenarioOptions) {
 
 	second := startGateway(t, dbPath, port, jwks, filepath.Join(dir, "gateway-2.log"))
 	opts.restartRun(t, second.port, opID, lastEventID, signer)
+	if opts.verifyLogs != nil {
+		opts.verifyLogs(t, filepath.Join(dir, "gateway-1.log"), filepath.Join(dir, "gateway-2.log"))
+	}
 }
 
 // subscribeResult 是一次成功的 v2 订阅。replayed 收集了 resume_complete
@@ -146,6 +151,21 @@ func TestE2E_A_RestartAheadClientGetsGap(t *testing.T) {
 				t.Fatalf("场景A失败：重启后事件 id 重复，实际收到 ids=%v", ids)
 			}
 		},
+		verifyLogs: func(t *testing.T, firstLog string, secondLog string) {
+			for _, entry := range []struct {
+				path string
+				text string
+			}{
+				{firstLog, `"msg":"[agent] state store enabled"`},
+				{secondLog, `"msg":"[agent] state store enabled"`},
+				{secondLog, `"msg":"[agent] operation state restored"`},
+				{secondLog, `"msg":"[agent] event replay gap detected"`},
+			} {
+				if !logContains(t, entry.path, entry.text) {
+					t.Errorf("场景A日志缺少 %q\n日志尾部:\n%s", entry.text, tailFile(entry.path, 40))
+				}
+			}
+		},
 	})
 }
 
@@ -178,6 +198,20 @@ func TestE2E_B_TerminalStatusSurvivesRestart(t *testing.T) {
 			status, _ := sub.complete["status"].(string)
 			if status != "completed" {
 				t.Fatalf("场景B失败：重启后 resume_complete.status 应为 completed，实际收到: %v", sub.complete)
+			}
+		},
+		verifyLogs: func(t *testing.T, firstLog string, secondLog string) {
+			for _, entry := range []struct {
+				path string
+				text string
+			}{
+				{firstLog, `"msg":"[agent] state store enabled"`},
+				{secondLog, `"msg":"[agent] operation state restored"`},
+				{secondLog, `"msg":"[agent] terminal operation restored"`},
+			} {
+				if !logContains(t, entry.path, entry.text) {
+					t.Errorf("场景B日志缺少 %q\n日志尾部:\n%s", entry.text, tailFile(entry.path, 40))
+				}
 			}
 		},
 	})

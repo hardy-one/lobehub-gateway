@@ -193,6 +193,13 @@ func (c *hubConnection) completeSubscribe(operationID string) {
 	c.mu.Unlock()
 	events, gap, replayStatus := op.collectReplay(jsonNumberString(since))
 	gap = gap || ahead
+	if gap {
+		c.server.log.Info("event replay gap detected",
+			"operationId", operationID,
+			"lastEventId", jsonNumberString(since),
+			"eventCounter", op.eventCounter,
+		)
+	}
 	filtered := events[:0]
 	for _, payload := range events {
 		if llmPayload(payload).Type == "llm_execute" {

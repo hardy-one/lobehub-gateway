@@ -98,7 +98,7 @@ func newRequestID() string {
 // source address, route, outcome, and timing when enabled. It always sets
 // X-Request-Id so callers can correlate responses even when request logging is
 // disabled.
-func logRequests(next http.Handler, enabled bool) http.Handler {
+func logRequests(next http.Handler, enabled bool, log *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID := newRequestID()
 		w.Header().Set("X-Request-Id", requestID)
@@ -127,9 +127,9 @@ func logRequests(next http.Handler, enabled bool) http.Handler {
 			"success", rec.status >= http.StatusOK && rec.status < http.StatusBadRequest,
 		}
 		if rec.status >= http.StatusBadRequest {
-			slog.Warn("request failed", attrs...)
+			log.Warn("request failed", attrs...)
 			return
 		}
-		slog.Info("request", attrs...)
+		log.Info("request", attrs...)
 	})
 }

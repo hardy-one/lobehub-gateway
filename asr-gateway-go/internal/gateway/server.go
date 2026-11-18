@@ -16,6 +16,7 @@ import (
 
 	"github.com/lobehub/lobehub/apps/asr-gateway-go/internal/provider"
 	"github.com/lobehub/lobehub/apps/asr-gateway-go/internal/provider/volcengine"
+	"github.com/lobehub/lobehub/apps/gatewaylog"
 )
 
 type sessionInfo struct {
@@ -26,14 +27,19 @@ type sessionInfo struct {
 type Server struct {
 	cfg       Config
 	auth      *authResolver
+	log       *slog.Logger
 	sessions  map[string]sessionInfo
 	sessionMu sync.RWMutex
 }
 
-func NewServer(cfg Config) *Server {
+func NewServer(cfg Config, log *slog.Logger) *Server {
+	if log == nil {
+		log = gatewaylog.DiscardLogger()
+	}
 	return &Server{
 		cfg:      cfg,
 		auth:     newAuthResolver(cfg),
+		log:      log,
 		sessions: make(map[string]sessionInfo),
 	}
 }
@@ -126,7 +132,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	clientConn, err := upgradeWebSocket(w, r)
 	if err != nil {
-		slog.Error("websocket upgrade failed", "error", err)
+		s.log.Error("websocket upgrade failed", "error", err)
 		return
 	}
 	defer clientConn.close()
@@ -134,7 +140,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Connect to selected ASR backend
 	asrProv, err := s.createProvider()
 	if err != nil {
-		slog.Error("failed to create asr provider", "error", err)
+		s.log.Error("failed to create asr provider", "error", err)
 		_ = clientConn.writeJSON(mustMarshal(map[string]any{
 			"sessionId": sessionID,
 			"sequence":  1,
@@ -185,7 +191,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				}))
 			case err, ok := <-asrProv.Errors():
 				if ok && err != nil {
-					slog.Error("upstream asr error", "error", err)
+					s.log.Error("upstream asr error", "error", err)
 					_ = clientConn.writeJSON(mustMarshal(map[string]any{
 						"sessionId": sessionID,
 						"sequence":  nextSeq(),
@@ -204,7 +210,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		op, payload, err := clientConn.readMessage()
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
-				slog.Debug("client websocket closed", "error", err)
+				s.log.Debug("client websocket closed", "error", err)
 			}
 			break
 		}
@@ -240,7 +246,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 				// Start session with upstream
 				if err := asrProv.StartSession(r.Context(), sessionID); err != nil {
-					slog.Error("failed to start upstream asr session", "error", err)
+					s.log.Error("failed to start upstream asr session", "error", err)
 					_ = clientConn.writeJSON(mustMarshal(map[string]any{
 						"sessionId": sessionID,
 						"sequence":  nextSeq(),
@@ -306,7 +312,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		} else if op == wsBinaryMessage {
 			// Forward raw PCM audio chunk to upstream
 			if err := asrProv.SendAudio(payload); err != nil {
-				slog.Error("failed to send audio to upstream", "error", err)
+				s.log.Error("failed to send audio to upstream", "error", err)
 				break
 			}
 		}
@@ -331,7 +337,7 @@ func (s *Server) createProvider() (provider.ASRProvider, error) {
 			APIKey:     s.cfg.VolcengineAPIKey,
 			Endpoint:   s.cfg.VolcengineEndpoint,
 			ResourceID: s.cfg.VolcengineResourceID,
-		}), nil
+		}, s.log), nil
 	default:
 		return nil, fmt.Errorf("unknown asr provider: %s", s.cfg.Provider)
 	}

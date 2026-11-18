@@ -1,6 +1,10 @@
 package devicegateway
 
-import "github.com/lobehub/lobehub/apps/device-gateway-go/internal/gateway"
+import (
+	"log/slog"
+
+	"github.com/lobehub/lobehub/apps/device-gateway-go/internal/gateway"
+)
 
 type Config = gateway.Config
 
@@ -8,4 +12,4 @@ type Server = gateway.Server
 
 func ConfigFromEnv() Config { return gateway.ConfigFromEnv() }
 
-func NewServer(cfg Config) *Server { return gateway.NewServer(cfg) }
+func NewServer(cfg Config, log *slog.Logger) *Server { return gateway.NewServer(cfg, log) }

@@ -13,7 +13,7 @@ func TestHandleCreateSession(t *testing.T) {
 		Provider:         "volcengine",
 		VolcengineAPIKey: "test-key",
 	}
-	server := NewServer(cfg)
+	server := NewServer(cfg, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/webapi/asr/realtime/session", nil)
 	w := httptest.NewRecorder()

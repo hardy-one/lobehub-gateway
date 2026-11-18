@@ -30,7 +30,7 @@ func TestConfigRequiresServiceTokenAndRejectsEmptyBearer(t *testing.T) {
 		t.Fatalf("expected populated SERVICE_TOKEN config to pass validation: %v", err)
 	}
 
-	srv := NewServer(Config{})
+	srv := NewServer(Config{}, nil)
 	httpSrv := httptest.NewServer(srv.Routes())
 	defer httpSrv.Close()
 
@@ -54,7 +54,7 @@ func TestConfigRequestLoggingFromEnv(t *testing.T) {
 }
 
 func TestHTTPAuthAndOfflineResponses(t *testing.T) {
-	srv := NewServer(Config{ServiceToken: "service-token"})
+	srv := NewServer(Config{ServiceToken: "service-token"}, nil)
 	httpSrv := httptest.NewServer(srv.Routes())
 	defer httpSrv.Close()
 
@@ -109,7 +109,7 @@ func TestHTTPAuthAndOfflineResponses(t *testing.T) {
 }
 
 func TestDeviceAPIRequiredFields(t *testing.T) {
-	srv := NewServer(Config{ServiceToken: "service-token"})
+	srv := NewServer(Config{ServiceToken: "service-token"}, nil)
 	httpSrv := httptest.NewServer(srv.Routes())
 	defer httpSrv.Close()
 
@@ -131,7 +131,7 @@ func TestDeviceAPIRequiredFields(t *testing.T) {
 }
 
 func TestWebSocketServiceTokenHeartbeatAndRPC(t *testing.T) {
-	srv := NewServer(Config{ServiceToken: "service-token"})
+	srv := NewServer(Config{ServiceToken: "service-token"}, nil)
 	srv.authTimeout = time.Second
 	srv.heartbeatTimeout = 2 * time.Second
 	httpSrv := httptest.NewServer(srv.Routes())
@@ -189,7 +189,7 @@ func TestWebSocketServiceTokenHeartbeatAndRPC(t *testing.T) {
 }
 
 func TestWebSocketAuthTimeoutAndConnectionIDReplacement(t *testing.T) {
-	srv := NewServer(Config{ServiceToken: "service-token"})
+	srv := NewServer(Config{ServiceToken: "service-token"}, nil)
 	srv.authTimeout = 50 * time.Millisecond
 	httpSrv := httptest.NewServer(srv.Routes())
 	defer httpSrv.Close()
@@ -219,7 +219,7 @@ func TestWebSocketAuthTimeoutAndConnectionIDReplacement(t *testing.T) {
 
 func TestWebSocketJWTClaimValidation(t *testing.T) {
 	jwks, signJWT := testJWTSigner(t)
-	srv := NewServer(Config{JWKSPublicKey: jwks, ServiceToken: "service-token"})
+	srv := NewServer(Config{JWKSPublicKey: jwks, ServiceToken: "service-token"}, nil)
 	srv.authTimeout = time.Second
 	httpSrv := httptest.NewServer(srv.Routes())
 	defer httpSrv.Close()
@@ -253,7 +253,7 @@ func TestWebSocketJWTClaimValidation(t *testing.T) {
 }
 
 func TestMessageAPIAndGenericRPC(t *testing.T) {
-	srv := NewServer(Config{ServiceToken: "service-token"})
+	srv := NewServer(Config{ServiceToken: "service-token"}, nil)
 	srv.authTimeout = time.Second
 	httpSrv := httptest.NewServer(srv.Routes())
 	defer httpSrv.Close()
@@ -313,7 +313,7 @@ func TestMessageAPIAndGenericRPC(t *testing.T) {
 }
 
 func TestAgentRunForwardsAllOptionalFields(t *testing.T) {
-	srv := NewServer(Config{ServiceToken: "service-token"})
+	srv := NewServer(Config{ServiceToken: "service-token"}, nil)
 	srv.authTimeout = time.Second
 	httpSrv := httptest.NewServer(srv.Routes())
 	defer httpSrv.Close()
@@ -390,7 +390,7 @@ func TestAgentRunForwardsAllOptionalFields(t *testing.T) {
 // distinguish "field absent" from "field empty" must see the same shape the
 // upstream TypeScript spread produces.
 func TestAgentRunPreservesEmptyValues(t *testing.T) {
-	srv := NewServer(Config{ServiceToken: "service-token"})
+	srv := NewServer(Config{ServiceToken: "service-token"}, nil)
 	srv.authTimeout = time.Second
 	httpSrv := httptest.NewServer(srv.Routes())
 	defer httpSrv.Close()
@@ -425,7 +425,7 @@ func TestAgentRunPreservesEmptyValues(t *testing.T) {
 }
 
 func TestConnectionIDChannelCoexistenceAndPriority(t *testing.T) {
-	srv := NewServer(Config{ServiceToken: "service-token"})
+	srv := NewServer(Config{ServiceToken: "service-token"}, nil)
 	srv.authTimeout = time.Second
 	httpSrv := httptest.NewServer(srv.Routes())
 	defer httpSrv.Close()

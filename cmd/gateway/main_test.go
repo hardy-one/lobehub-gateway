@@ -1,15 +1,22 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	asrgateway "github.com/lobehub/lobehub/apps/asr-gateway-go"
+	"github.com/lobehub/lobehub/apps/gatewaylog"
+	osscenter "github.com/lobehub/lobehub/apps/oss-center-go"
 )
 
 func TestConfigsFromEnvUsesDedicatedPorts(t *testing.T) {
@@ -68,7 +75,7 @@ func TestRunServicesServesEveryGatewayAndStopsCleanly(t *testing.T) {
 	stop := make(chan os.Signal, 1)
 	done := make(chan int, 1)
 	go func() {
-		done <- runServices(newServices(configs), stop, time.Second)
+		done <- runServices(newServices(configs, gatewaylog.NewBaseHandler()), slog.New(gatewaylog.NewBaseHandler()), stop, time.Second)
 	}()
 
 	waitForHealth(t, "http://127.0.0.1:"+configs.agent.Port+"/health")
@@ -112,7 +119,7 @@ func TestRunServicesReturnsFailureAndShutsDownAllServices(t *testing.T) {
 		},
 	}
 
-	if exitCode := runServices(services, make(chan os.Signal), time.Second); exitCode != 1 {
+	if exitCode := runServices(services, nil, make(chan os.Signal), time.Second); exitCode != 1 {
 		t.Fatalf("runServices() exit code = %d, want 1", exitCode)
 	}
 
@@ -138,7 +145,7 @@ func TestShutdownServicesRunsConcurrently(t *testing.T) {
 
 	done := make(chan bool, 1)
 	go func() {
-		done <- shutdownServices(services, time.Second)
+		done <- shutdownServices(services, nil, time.Second)
 	}()
 
 	seen := make(map[string]bool)
@@ -168,7 +175,7 @@ func TestShutdownServicesUsesSingleDeadline(t *testing.T) {
 	}
 
 	startedAt := time.Now()
-	failed := shutdownServices(services, 50*time.Millisecond)
+	failed := shutdownServices(services, nil, 50*time.Millisecond)
 	elapsed := time.Since(startedAt)
 	close(release)
 
@@ -227,4 +234,27 @@ func waitForHealth(t *testing.T, url string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("health endpoint did not become ready: %s", url)
+}
+
+func TestNewServicesUsesPerServiceLoggers(t *testing.T) {
+	t.Setenv("SERVICE_TOKEN", "test-token")
+	configs, err := configsFromEnv()
+	if err != nil {
+		t.Fatalf("configsFromEnv() error = %v", err)
+	}
+	configs.asr = &asrgateway.Config{ServiceToken: "test-token", Port: "8789"}
+	configs.ossCenter = &osscenter.Config{}
+
+	var buf bytes.Buffer
+	handler := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
+	services := newServices(configs, handler)
+	for _, svc := range services {
+		svc.logger.Info("check")
+	}
+	output := buf.String()
+	for _, prefix := range []string{"[agent] check", "[device] check", "[asr] check", "[message] check", "[oss] check"} {
+		if !strings.Contains(output, prefix) {
+			t.Errorf("missing service log prefix %q in output:\n%s", prefix, output)
+		}
+	}
 }

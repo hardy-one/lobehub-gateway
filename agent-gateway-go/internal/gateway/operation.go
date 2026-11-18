@@ -83,6 +83,10 @@ func (o *operation) applyRestoredState(record stateRecord) {
 	o.record.CreatedAt = record.CreatedAt
 	if isTerminalStatus(record.Status) {
 		o.record.Status = record.Status
+		o.server.log.Info("terminal operation restored",
+			"operationId", o.record.OperationID,
+			"status", record.Status,
+		)
 		o.scheduleCleanupLocked()
 		return
 	}
@@ -362,6 +366,13 @@ func (o *operation) resolveInput(requestID string, content string) {
 
 func (o *operation) handleResume(conn *operationConnection, lastEventID string, wantStatus bool) {
 	payloads, gap, status := o.collectReplay(lastEventID)
+	if gap {
+		o.server.log.Info("event replay gap detected",
+			"operationId", o.record.OperationID,
+			"lastEventId", lastEventID,
+			"eventCounter", o.eventCounter,
+		)
+	}
 	// Mirror upstream AgentOperationDO.handleResume: only confirm a status we
 	// actually hold. A missing status can mean "init hasn't landed yet" (the
 	// init/resume race) just as much as "already cleaned up" — synthesizing a
@@ -660,7 +671,7 @@ func (o *operation) cleanup() {
 	o.stopCleanupLocked()
 	operationID := o.record.OperationID
 	if o.server.stateStore != nil {
-		o.server.stateStore.delete(operationID)
+		o.server.stateStore.remove(operationID)
 	}
 	o.mu.Unlock()
 	o.server.notifyLifecycle(o, "gone", "")

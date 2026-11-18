@@ -121,6 +121,7 @@ Each sub-project remains an independent Go module and can be built/tested on its
 | `READ_TIMEOUT` | `30s` | Yes | HTTP read timeout |
 | `WRITE_TIMEOUT` | `1m` | Yes | HTTP write timeout |
 | `REQUEST_LOG_ENABLED` | `false` | Yes | Enable per-request structured HTTP access logging |
+| `LOG_LEVEL` | `info` | Yes | Structured log level: `debug`, `info`, `warn`, or `error` |
 | `SHUTDOWN_TIMEOUT` | `10s` | Yes | Graceful shutdown timeout |
 
 The unified binary does not read `PORT`; each service's port is controlled only by `AGENT_PORT` / `DEVICE_PORT` / `ASR_PORT` / `MESSAGE_PORT`. The standalone binaries keep using `PORT` (default 8787) as before.

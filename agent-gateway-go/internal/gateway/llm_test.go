@@ -9,7 +9,7 @@ import (
 )
 
 func TestLLMV1TargetsStarterAndCancelsEveryClient(t *testing.T) {
-	s := NewServer(Config{ServiceToken: "service-token"})
+	s := NewServer(Config{ServiceToken: "service-token"}, nil)
 	ts := httptest.NewServer(s.Routes())
 	defer ts.Close()
 	postJSON(t, ts.URL+"/api/operations/init", map[string]any{"operationId": "llm", "userId": "u1"}, 200)
@@ -96,7 +96,7 @@ func TestLLMV2RoutingAndReplay(t *testing.T) {
 }
 
 func TestLLMReplayOpenCallsSurviveBufferTrim(t *testing.T) {
-	s := NewServer(Config{ServiceToken: "service-token"})
+	s := NewServer(Config{ServiceToken: "service-token"}, nil)
 	ts := httptest.NewServer(s.Routes())
 	defer ts.Close()
 	postJSON(t, ts.URL+"/api/operations/init", map[string]any{"operationId": "llm", "userId": "u1"}, 200)

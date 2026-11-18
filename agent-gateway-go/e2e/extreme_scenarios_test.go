@@ -278,7 +278,7 @@ func TestE2E_F_CorruptStateDB(t *testing.T) {
 	garbagePath := filepath.Join(dir, "garbage.db")
 	writeGarbageDB(t, garbagePath)
 	proc := startGateway(t, garbagePath, port, signer.jwks(), filepath.Join(dir, "gateway-garbage.log"))
-	if !logContains(t, proc.logPath, "operation state persistence disabled") {
+	if !logContains(t, proc.logPath, "state store degraded to in-memory mode") {
 		t.Fatalf("场景F失败：垃圾字节库应触发降级 warn (db=%s)，日志尾部:\n%s", garbagePath, tailFile(proc.logPath, 40))
 	}
 	assertBasicFlow(t, proc.port, "e2e-garbage-op", signer)
@@ -292,7 +292,7 @@ func TestE2E_F_CorruptStateDB(t *testing.T) {
 		t.Fatalf("写入 0 字节数据库文件失败: %v", err)
 	}
 	proc2 := startGateway(t, zeroPath, port, signer.jwks(), filepath.Join(dir, "gateway-zero.log"))
-	if !logContains(t, proc2.logPath, "operation state persistence disabled") {
+	if !logContains(t, proc2.logPath, "state store degraded to in-memory mode") {
 		t.Fatalf("场景F失败：0 字节库应触发降级 warn (db=%s)，日志尾部:\n%s", zeroPath, tailFile(proc2.logPath, 40))
 	}
 	assertBasicFlow(t, proc2.port, "e2e-zero-op", signer)
@@ -312,7 +312,7 @@ func TestE2E_G_IllegalStateDBPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	proc := startGateway(t, dirAsDB, port, signer.jwks(), filepath.Join(dir, "gateway-dirpath.log"))
-	if !logContains(t, proc.logPath, "operation state persistence disabled") {
+	if !logContains(t, proc.logPath, "state store degraded to in-memory mode") {
 		t.Fatalf("场景G失败：指向目录的 DB 路径应触发降级 warn，日志尾部:\n%s", tailFile(proc.logPath, 40))
 	}
 	assertBasicFlow(t, proc.port, "e2e-dirpath-op", signer)
@@ -330,7 +330,7 @@ func TestE2E_G_IllegalStateDBPath(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(roDir, 0o755) }) // 恢复权限，保证目录可被清理
 	roPath := filepath.Join(roDir, "state.db")
 	proc2 := startGateway(t, roPath, port, signer.jwks(), filepath.Join(dir, "gateway-readonly.log"))
-	if !logContains(t, proc2.logPath, "operation state persistence disabled") {
+	if !logContains(t, proc2.logPath, "state store degraded to in-memory mode") {
 		t.Fatalf("场景G失败：不可写目录应触发降级 warn，日志尾部:\n%s", tailFile(proc2.logPath, 40))
 	}
 	assertBasicFlow(t, proc2.port, "e2e-readonly-op", signer)

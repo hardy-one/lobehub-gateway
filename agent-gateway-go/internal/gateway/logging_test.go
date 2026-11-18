@@ -33,13 +33,10 @@ func (s *syncBuffer) String() string {
 	return s.b.String()
 }
 
-func withCapturedLogs(t *testing.T) (*syncBuffer, func()) {
+func withCapturedLogs(t *testing.T) (*syncBuffer, *slog.Logger) {
 	t.Helper()
 	buf := &syncBuffer{}
-	handler := slog.New(slog.NewJSONHandler(buf, nil))
-	prev := slog.Default()
-	slog.SetDefault(handler)
-	return buf, func() { slog.SetDefault(prev) }
+	return buf, slog.New(slog.NewJSONHandler(buf, nil))
 }
 
 // waitForLog polls until all substrings appear in the captured logs, since
@@ -70,16 +67,15 @@ func waitForLog(t *testing.T, logs *syncBuffer, wants ...string) {
 	}
 }
 
-func testAgentServer() *httptest.Server {
-	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: "http://127.0.0.1:1", RequestLogging: true})
+func testAgentServer(log *slog.Logger) *httptest.Server {
+	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: "http://127.0.0.1:1", RequestLogging: true}, log)
 	return httptest.NewServer(srv.Routes())
 }
 
 func TestRequestLoggingSuccess(t *testing.T) {
-	logs, restore := withCapturedLogs(t)
-	defer restore()
+	logs, logger := withCapturedLogs(t)
 
-	ts := testAgentServer()
+	ts := testAgentServer(logger)
 	defer ts.Close()
 
 	req, err := http.NewRequest(http.MethodGet, ts.URL+"/health", nil)
@@ -113,10 +109,9 @@ func TestRequestLoggingSuccess(t *testing.T) {
 }
 
 func TestRequestLoggingWebSocketUpgrade(t *testing.T) {
-	logs, restore := withCapturedLogs(t)
-	defer restore()
+	logs, logger := withCapturedLogs(t)
 
-	ts := testAgentServer()
+	ts := testAgentServer(logger)
 	defer ts.Close()
 
 	u, err := url.Parse(ts.URL)
@@ -154,10 +149,9 @@ func TestRequestLoggingWebSocketUpgrade(t *testing.T) {
 }
 
 func TestRequestLoggingFailure(t *testing.T) {
-	logs, restore := withCapturedLogs(t)
-	defer restore()
+	logs, logger := withCapturedLogs(t)
 
-	ts := testAgentServer()
+	ts := testAgentServer(logger)
 	defer ts.Close()
 
 	resp, err := http.Get(ts.URL + "/api/operations/status")
@@ -179,10 +173,9 @@ func TestRequestLoggingFailure(t *testing.T) {
 }
 
 func TestRequestLoggingDisabledByDefault(t *testing.T) {
-	logs, restore := withCapturedLogs(t)
-	defer restore()
+	logs, logger := withCapturedLogs(t)
 
-	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: "http://127.0.0.1:1"})
+	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: "http://127.0.0.1:1"}, logger)
 	ts := httptest.NewServer(srv.Routes())
 	defer ts.Close()
 

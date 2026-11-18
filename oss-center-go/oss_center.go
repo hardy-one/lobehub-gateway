@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/lobehub/lobehub/apps/gatewaylog"
 	"github.com/lobehub/lobehub/apps/oss-center-go/internal/config"
 	"github.com/lobehub/lobehub/apps/oss-center-go/internal/lobehub"
 	"github.com/lobehub/lobehub/apps/oss-center-go/internal/messagegw"
@@ -34,7 +35,7 @@ type Component struct {
 
 func NewComponent(cfg Config, log *slog.Logger) *Component {
 	if log == nil {
-		log = slog.Default()
+		log = gatewaylog.DiscardLogger()
 	}
 	reconciler := reconcile.New(
 		lobehub.New(cfg.LobeHubBaseURL, cfg.ServiceToken),

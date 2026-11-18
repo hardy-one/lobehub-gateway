@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lobehub/lobehub/apps/gatewaylog"
 	"github.com/lobehub/lobehub/apps/message-gateway-go/internal/provider"
 )
 
@@ -29,9 +30,11 @@ type Server struct {
 	wg        sync.WaitGroup
 }
 
-func NewServer(cfg Config) *Server {
-	log := slog.Default()
-	lobe := newLobeClient(cfg)
+func NewServer(cfg Config, log *slog.Logger) *Server {
+	if log == nil {
+		log = gatewaylog.DiscardLogger()
+	}
+	lobe := newLobeClient(cfg, log)
 	return &Server{
 		cfg:      cfg,
 		log:      log,
@@ -76,7 +79,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/admin/registered-ids", s.withServiceAuth(s.handleRegisteredIDs))
 	mux.HandleFunc("GET /api/admin/capabilities", s.withServiceAuth(s.handleCapabilities))
 
-	return logRequests(mux, s.cfg.RequestLogging)
+	return logRequests(mux, s.cfg.RequestLogging, s.log)
 }
 
 // withServiceAuth guards every route LobeHub calls. The credential is the same

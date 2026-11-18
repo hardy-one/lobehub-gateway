@@ -19,6 +19,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
+	github.com/lobehub/lobehub/apps/gatewaylog v0.0.0
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
@@ -39,3 +40,5 @@ replace (
 	github.com/lobehub/lobehub/apps/message-gateway-go => ./message-gateway-go
 	github.com/lobehub/lobehub/apps/oss-center-go => ./oss-center-go
 )
+
+replace github.com/lobehub/lobehub/apps/gatewaylog => ./gatewaylog

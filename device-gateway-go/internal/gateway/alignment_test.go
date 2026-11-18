@@ -10,7 +10,7 @@ import (
 )
 
 func TestDeviceRoutingUsesUserID(t *testing.T) {
-	s := NewServer(Config{ServiceToken: "service-token"})
+	s := NewServer(Config{ServiceToken: "service-token"}, nil)
 	ts := httptest.NewServer(s.Routes())
 	defer ts.Close()
 	res := postJSON(t, ts.URL+"/api/device/status", "service-token", `{"workspaceId":"w1"}`)
@@ -37,7 +37,7 @@ func TestDeviceRoutingUsesUserID(t *testing.T) {
 }
 
 func TestToolCallReconnectKeepsRequestAndConnectionIdentity(t *testing.T) {
-	s := NewServer(Config{ServiceToken: "service-token"})
+	s := NewServer(Config{ServiceToken: "service-token"}, nil)
 	ts := httptest.NewServer(s.Routes())
 	defer ts.Close()
 	connect := func(path string) *testWS {

@@ -346,7 +346,7 @@ func TestMetricCleanupWithoutTraffic(t *testing.T) {
 }
 
 func TestDeviceMetricsWebSocketAndHTTP(t *testing.T) {
-	s := NewServer(Config{ServiceToken: "service-token"})
+	s := NewServer(Config{ServiceToken: "service-token"}, nil)
 	ts := httptest.NewServer(s.Routes())
 	defer ts.Close()
 	t.Cleanup(func() {
@@ -400,14 +400,14 @@ func TestDeviceMetricsWebSocketAndHTTP(t *testing.T) {
 	res = postJSON(t, ts.URL+"/api/device/metrics", "service-token", `{"deviceId":"d1"}`)
 	assertStatus(t, res, 400)
 	assertBody(t, res, "Missing userId")
-	fresh := NewServer(Config{ServiceToken: "service-token"})
+	fresh := NewServer(Config{ServiceToken: "service-token"}, nil)
 	if got := fresh.metrics.read(metricKey{"u1", "d1"}, 0, time.Now()); len(got) != 0 {
 		t.Fatal("new process retained metric history")
 	}
 }
 
 func TestDeviceMetricsDiskWebSocketAndHTTP(t *testing.T) {
-	s := NewServer(Config{ServiceToken: "service-token"})
+	s := NewServer(Config{ServiceToken: "service-token"}, nil)
 	ts := httptest.NewServer(s.Routes())
 	defer ts.Close()
 	t.Cleanup(func() {

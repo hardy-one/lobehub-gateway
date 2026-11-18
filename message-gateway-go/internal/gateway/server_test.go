@@ -141,7 +141,7 @@ func newTestServer(t *testing.T) (*Server, string, *lobeRecorder) {
 		ServiceToken:   testToken,
 		TypingInterval: time.Hour, // tests drive typing explicitly
 	}
-	server := NewServer(cfg)
+	server := NewServer(cfg, nil)
 	t.Cleanup(func() { server.Shutdown(context.Background()) })
 
 	return server, lobe.URL, recorder

@@ -67,6 +67,7 @@ The inactivity watchdog starts at operation initialization. Every backend activi
 | `READ_TIMEOUT` | `30s` | Go HTTP server read timeout. |
 | `WRITE_TIMEOUT` | `1m` | Go HTTP server write timeout. |
 | `REQUEST_LOG_ENABLED` | `false` | Enable one structured log line per HTTP request. |
+| `LOG_LEVEL` | `info` | Structured log level: `debug`, `info`, `warn`, or `error`. |
 | `SHUTDOWN_TIMEOUT` | `10s` | Graceful shutdown timeout. |
 
 ## Run locally

@@ -26,14 +26,16 @@ const (
 type lobeClient struct {
 	baseURL      string
 	httpClient   *http.Client
+	log          *slog.Logger
 	pullToken    string
 	serviceToken string
 }
 
-func newLobeClient(cfg Config) *lobeClient {
+func newLobeClient(cfg Config, log *slog.Logger) *lobeClient {
 	return &lobeClient{
 		baseURL:      strings.TrimRight(cfg.LobeAPIBaseURL, "/"),
 		httpClient:   &http.Client{Timeout: lobeRequestTimeout},
+		log:          log,
 		pullToken:    cfg.PullToken,
 		serviceToken: cfg.ServiceToken,
 	}
@@ -136,7 +138,7 @@ func (c *lobeClient) postJSONRaw(ctx context.Context, path string, token string,
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		// LobeHub answers 204 for callbacks it has no work for; every other
 		// non-2xx is a real failure the operator needs to see.
-		slog.Debug("lobe request failed", "path", path, "status", response.StatusCode, "body", strings.TrimSpace(string(responseBody)))
+		c.log.Debug("lobe request failed", "path", path, "status", response.StatusCode, "body", strings.TrimSpace(string(responseBody)))
 		return nil, fmt.Errorf("%s failed (%d): %s", path, response.StatusCode, strings.TrimSpace(string(responseBody)))
 	}
 	return responseBody, nil

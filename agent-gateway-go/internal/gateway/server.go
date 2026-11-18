@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lobehub/lobehub/apps/gatewaylog"
 )
 
 const (
@@ -28,6 +30,7 @@ type Server struct {
 	closeOnce        sync.Once
 	closed           bool
 	heartbeatTimeout time.Duration
+	log              *slog.Logger
 	operations       map[string]*operation
 	operationsMu     sync.Mutex
 	stateStore       *operationStateStore
@@ -35,17 +38,21 @@ type Server struct {
 	v2Mu             sync.RWMutex
 }
 
-func NewServer(cfg Config) *Server {
+func NewServer(cfg Config, log *slog.Logger) *Server {
+	if log == nil {
+		log = gatewaylog.DiscardLogger()
+	}
 	srv := &Server{
 		auth:             newAuthResolver(cfg),
 		authTimeout:      defaultAuthTimeout,
 		cfg:              cfg,
 		cleanupDelay:     defaultCleanupDelay,
 		heartbeatTimeout: defaultHeartbeatTimeout,
+		log:              log,
 		operations:       map[string]*operation{},
 		v2Connections:    map[*hubConnection]struct{}{},
 	}
-	srv.stateStore = newOperationStateStore(cfg.StateDBPath, slog.Default())
+	srv.stateStore = newOperationStateStore(cfg.StateDBPath, log)
 	return srv
 }
 
@@ -60,7 +67,7 @@ func (s *Server) Routes() http.Handler {
 		writeText(w, http.StatusNotFound, "404 page not found")
 	})
 	mux.HandleFunc("/api/operations/", s.handleOperations)
-	return logRequests(mux, s.cfg.RequestLogging)
+	return logRequests(mux, s.cfg.RequestLogging, s.log)
 }
 
 // acceptingOperations reports whether new operations may still be created.
@@ -96,6 +103,11 @@ func (s *Server) getOrCreateOperation(operationID string) *operation {
 	s.operations[operationID] = op
 	if s.stateStore != nil {
 		if record, ok := s.stateStore.load(operationID); ok {
+			s.log.Info("operation state restored",
+				"operationId", operationID,
+				"status", record.Status,
+				"eventCounter", record.EventCounter,
+			)
 			op.applyRestoredState(record)
 		}
 	}
@@ -327,6 +339,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		if s.stateStore != nil {
 			if record, ok := s.stateStore.load(operationID); ok {
 				if isTerminalStatus(record.Status) {
+					s.log.Info("terminal operation restored",
+						"operationId", operationID,
+						"status", record.Status,
+					)
 					writeJSON(w, http.StatusOK, map[string]any{"clientConnected": false, "status": record.Status})
 					return
 				}

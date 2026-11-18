@@ -17,6 +17,7 @@ services:
       GATEWAY_STATE_DB: ${GATEWAY_STATE_DB:-/data/agent-gateway.db}
       PULL_TOKEN: ${PULL_TOKEN:-}
       REQUEST_LOG_ENABLED: ${REQUEST_LOG_ENABLED:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       ASR_PROVIDER: ${ASR_PROVIDER:-volcengine}
       VOLCENGINE_VOICE_API_KEY: ${VOLCENGINE_VOICE_API_KEY:-}
       VOLCENGINE_RESOURCE_ID: ${VOLCENGINE_RESOURCE_ID:-volc.seedasr.sauc.duration}

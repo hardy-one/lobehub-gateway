@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lobehub/lobehub/apps/gatewaylog"
 )
 
 const (
@@ -31,16 +34,21 @@ type Server struct {
 	heartbeatTimeout time.Duration
 	hubs             map[string]*hub
 	hubsMu           sync.Mutex
+	log              *slog.Logger
 	metrics          *metricStore
 }
 
-func NewServer(cfg Config) *Server {
+func NewServer(cfg Config, log *slog.Logger) *Server {
+	if log == nil {
+		log = gatewaylog.DiscardLogger()
+	}
 	return &Server{
 		auth:             newAuthResolver(cfg),
 		authTimeout:      defaultAuthTimeout,
 		cfg:              cfg,
 		heartbeatTimeout: defaultHeartbeatTimeout,
 		hubs:             map[string]*hub{},
+		log:              log,
 		metrics:          newMetricStore(),
 	}
 }
@@ -52,7 +60,7 @@ func (s *Server) Routes() http.Handler {
 	})
 	mux.HandleFunc("GET /ws", s.handleWebSocket)
 	mux.HandleFunc("/api/device/", s.withServiceAuth(s.handleDeviceAPI))
-	return logRequests(mux, s.cfg.RequestLogging)
+	return logRequests(mux, s.cfg.RequestLogging, s.log)
 }
 
 func (s *Server) hub(userID string) *hub {

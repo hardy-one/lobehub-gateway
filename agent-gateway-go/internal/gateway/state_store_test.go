@@ -29,7 +29,7 @@ func testStateStore(t *testing.T) *operationStateStore {
 
 func testStateServer(t *testing.T) (*Server, *httptest.Server) {
 	t.Helper()
-	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: "http://127.0.0.1:1"})
+	srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: "http://127.0.0.1:1"}, nil)
 	srv.stateStore = testStateStore(t)
 	srv.authTimeout = time.Second
 	srv.heartbeatTimeout = time.Second
@@ -102,7 +102,7 @@ func TestOperationStateStoreCloseIsSafeWhenDBUnavailable(t *testing.T) {
 }
 
 func TestOperationStateNewOperationWithoutRecord(t *testing.T) {
-	srv := NewServer(Config{ServiceToken: "service-token"})
+	srv := NewServer(Config{ServiceToken: "service-token"}, nil)
 	srv.stateStore = testStateStore(t)
 	op := srv.getOrCreateOperation("op-new")
 	_, status := op.statusSnapshot()
@@ -123,7 +123,7 @@ func TestOperationStateRestoresTerminalStatus(t *testing.T) {
 		},
 		EventCounter: 17,
 	})
-	srv := NewServer(Config{ServiceToken: "service-token"})
+	srv := NewServer(Config{ServiceToken: "service-token"}, nil)
 	srv.stateStore = store
 	op := srv.getOrCreateOperation("op-terminal")
 	if op.record.Status != StatusCompleted || op.eventCounter != 17 || op.record.UserID != "user-1" || !op.record.CreatedAt.Equal(created) {
@@ -146,7 +146,7 @@ func TestOperationStateRestoresCounterOnlyForRunningStatus(t *testing.T) {
 				},
 				EventCounter: 9,
 			})
-			srv := NewServer(Config{ServiceToken: "service-token"})
+			srv := NewServer(Config{ServiceToken: "service-token"}, nil)
 			srv.stateStore = store
 			op := srv.getOrCreateOperation(operationID)
 			if op.record.Status != "" || op.eventCounter != 9 || op.record.UserID != "user-1" || !op.record.CreatedAt.Equal(created) {
@@ -159,7 +159,7 @@ func TestOperationStateRestoresCounterOnlyForRunningStatus(t *testing.T) {
 func TestOperationStateRestartReplayAndGap(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "gateway.db")
 	newStateServer := func() (*Server, *httptest.Server) {
-		srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: "http://127.0.0.1:1"})
+		srv := NewServer(Config{ServiceToken: "service-token", LobeAPIBaseURL: "http://127.0.0.1:1"}, nil)
 		srv.stateStore = newOperationStateStoreWithPath(dbPath, slog.New(slog.NewTextHandler(io.Discard, nil)))
 		srv.authTimeout = time.Second
 		srv.heartbeatTimeout = time.Second
@@ -212,7 +212,7 @@ func TestOperationStateRestartReplayAndGap(t *testing.T) {
 }
 
 func TestCollectReplayAheadClientReportsGap(t *testing.T) {
-	srv := NewServer(Config{ServiceToken: "service-token"})
+	srv := NewServer(Config{ServiceToken: "service-token"}, nil)
 	op := srv.getOrCreateOperation("op-ahead")
 	op.eventCounter = 2
 	_, gap, _ := op.collectReplay("7")
@@ -279,10 +279,10 @@ func TestSQLiteUnavailableFallsBackToMemory(t *testing.T) {
 	if store != nil {
 		t.Fatal("expected persistence to be disabled when directory is missing")
 	}
-	if !strings.Contains(logs.String(), "operation state persistence disabled") {
+	if !strings.Contains(logs.String(), "state store degraded to in-memory mode") {
 		t.Fatalf("expected a warn log, got %q", logs.String())
 	}
-	srv := NewServer(Config{ServiceToken: "service-token"})
+	srv := NewServer(Config{ServiceToken: "service-token"}, nil)
 	srv.stateStore = store
 	op := srv.getOrCreateOperation("op-fallback")
 	op.init("op-fallback", "user-1", nil)

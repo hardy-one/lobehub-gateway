@@ -66,6 +66,7 @@ v2 协议在 `/v2/ws` upgrade 时完成认证。`token` 必填；`tokenType` 默
 | `GATEWAY_STATE_DB` | `/data/agent-gateway.db` | 保存 operation 状态与事件序号的 SQLite 文件；父目录必须存在。无法打开时仅打印警告并禁用持久化，不影响启动。 |
 | `READ_TIMEOUT` | `30s` | Go HTTP 服务器读取超时时间。 |
 | `WRITE_TIMEOUT` | `1m` | Go HTTP 服务器写入超时时间。 |
+| `LOG_LEVEL` | `info` | 结构化日志级别：`debug`、`info`、`warn` 或 `error`。 |
 | `SHUTDOWN_TIMEOUT` | `10s` | 优雅关闭超时时间。 |
 
 ## 本地运行

@@ -121,6 +121,7 @@ lobehub-gateway-go/
 | `READ_TIMEOUT` | `30s` | 是 | HTTP 读取超时 |
 | `WRITE_TIMEOUT` | `1m` | 是 | HTTP 写入超时 |
 | `REQUEST_LOG_ENABLED` | `false` | 是 | 是否输出每个 HTTP 请求的结构化访问日志 |
+| `LOG_LEVEL` | `info` | 是 | 结构化日志级别：`debug`、`info`、`warn` 或 `error` |
 | `SHUTDOWN_TIMEOUT` | `10s` | 是 | 优雅关闭超时 |
 
 统一二进制不读取 `PORT`；各服务端口只由 `AGENT_PORT` / `DEVICE_PORT` / `ASR_PORT` / `MESSAGE_PORT` 控制。独立二进制仍像以前一样使用 `PORT`（默认 8787）。

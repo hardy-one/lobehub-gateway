@@ -16,6 +16,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/gorilla/websocket"
 	"github.com/lobehub/lobehub/apps/asr-gateway-go/internal/provider"
+	"github.com/lobehub/lobehub/apps/gatewaylog"
 )
 
 const (
@@ -48,6 +49,7 @@ type Config struct {
 type VolcengineProvider struct {
 	cfg       Config
 	conn      *websocket.Conn
+	log       *slog.Logger
 	writeMu   sync.Mutex
 	eventsCh  chan provider.TranscriptEvent
 	errorsCh  chan error
@@ -56,15 +58,19 @@ type VolcengineProvider struct {
 	seq       int32
 }
 
-func NewVolcengineProvider(cfg Config) *VolcengineProvider {
+func NewVolcengineProvider(cfg Config, log *slog.Logger) *VolcengineProvider {
 	if cfg.Endpoint == "" {
 		cfg.Endpoint = defaultEndpoint
 	}
 	if cfg.ResourceID == "" {
 		cfg.ResourceID = defaultResourceID
 	}
+	if log == nil {
+		log = gatewaylog.DiscardLogger()
+	}
 	return &VolcengineProvider{
 		cfg:      cfg,
+		log:      log,
 		eventsCh: make(chan provider.TranscriptEvent, 32),
 		errorsCh: make(chan error, 1),
 		closed:   make(chan struct{}),
@@ -275,7 +281,7 @@ func (p *VolcengineProvider) recvLoop() {
 		case serverErrorResponse:
 			if len(payload) >= 8 {
 				code := int(binary.BigEndian.Uint32(payload[:4]))
-				slog.Error("volcengine error response", "code", code)
+				p.log.Error("volcengine error response", "code", code)
 				return
 			}
 		}
@@ -314,7 +320,7 @@ func (p *VolcengineProvider) recvLoop() {
 
 			if err := sonic.Unmarshal(payload, &resp); err == nil {
 				if resp.Code != 0 || resp.Error != "" {
-					slog.Warn("volcengine asr error payload", "code", resp.Code, "error", resp.Error)
+					p.log.Warn("volcengine asr error payload", "code", resp.Code, "error", resp.Error)
 					continue
 				}
 
