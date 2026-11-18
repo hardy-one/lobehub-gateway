@@ -75,7 +75,7 @@ func TestRunServicesServesEveryGatewayAndStopsCleanly(t *testing.T) {
 	stop := make(chan os.Signal, 1)
 	done := make(chan int, 1)
 	go func() {
-		done <- runServices(newServices(configs, gatewaylog.NewBaseHandler()), slog.New(gatewaylog.NewBaseHandler()), stop, time.Second)
+		done <- runServices(newServices(configs), slog.New(gatewaylog.NewBaseHandler()), stop, time.Second)
 	}()
 
 	waitForHealth(t, "http://127.0.0.1:"+configs.agent.Port+"/health")
@@ -247,7 +247,9 @@ func TestNewServicesUsesPerServiceLoggers(t *testing.T) {
 
 	var buf bytes.Buffer
 	handler := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
-	services := newServices(configs, handler)
+	services := newServices(configs, func(name string) *slog.Logger {
+		return gatewaylog.NewServiceLoggerWithHandler(handler, name)
+	})
 	for _, svc := range services {
 		svc.logger.Info("check")
 	}

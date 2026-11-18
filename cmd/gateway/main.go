@@ -115,12 +115,22 @@ func configsFromEnv() (gatewayConfigs, error) {
 	}, nil
 }
 
-func newServices(configs gatewayConfigs) []service {
-	agentLog := gatewaylog.NewServiceLogger("agent")
-	deviceLog := gatewaylog.NewServiceLogger("device")
-	asrLog := gatewaylog.NewServiceLogger("asr")
-	messageLog := gatewaylog.NewServiceLogger("message")
-	ossLog := gatewaylog.NewServiceLogger("oss")
+// newServices builds one service per gateway. loggerFor is an optional test
+// seam: pass a factory to capture the per-service loggers, omit it in
+// production to use the stderr loggers built from LOG_LEVEL / LOG_FORMAT.
+func newServices(configs gatewayConfigs, loggerFor ...func(string) *slog.Logger) []service {
+	makeLogger := func(name string) *slog.Logger {
+		if len(loggerFor) > 0 && loggerFor[0] != nil {
+			return loggerFor[0](name)
+		}
+		return gatewaylog.NewServiceLogger(name)
+	}
+
+	agentLog := makeLogger("agent")
+	deviceLog := makeLogger("device")
+	asrLog := makeLogger("asr")
+	messageLog := makeLogger("message")
+	ossLog := makeLogger("oss")
 	// The agent gateway owns the operation state store, so its listener alone
 	// is not the whole service: after the HTTP server stops accepting requests,
 	// Close must flush pending event counters and close SQLite. Without this
