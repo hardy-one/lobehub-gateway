@@ -156,14 +156,18 @@ func TestE2E_A_RestartAheadClientGetsGap(t *testing.T) {
 				path string
 				text string
 			}{
-				{firstLog, `"msg":"[agent] state store enabled"`},
-				{secondLog, `"msg":"[agent] state store enabled"`},
-				{secondLog, `"msg":"[agent] operation state restored"`},
-				{secondLog, `"msg":"[agent] event replay gap detected"`},
+				{firstLog, `state store enabled`},
+				{secondLog, `state store enabled`},
+				{secondLog, `operation state restored`},
+				{secondLog, `event replay gap detected`},
 			} {
 				if !logContains(t, entry.path, entry.text) {
 					t.Errorf("场景A日志缺少 %q\n日志尾部:\n%s", entry.text, tailFile(entry.path, 40))
 				}
+			}
+			// 服务前缀必须落在日志里，运维才能按服务过滤
+			if !logContains(t, secondLog, "[agent]") {
+				t.Errorf("场景A日志缺少服务前缀 [agent]\n日志尾部:\n%s", tailFile(secondLog, 20))
 			}
 		},
 	})
@@ -205,9 +209,9 @@ func TestE2E_B_TerminalStatusSurvivesRestart(t *testing.T) {
 				path string
 				text string
 			}{
-				{firstLog, `"msg":"[agent] state store enabled"`},
-				{secondLog, `"msg":"[agent] operation state restored"`},
-				{secondLog, `"msg":"[agent] terminal operation restored"`},
+				{firstLog, `state store enabled`},
+				{secondLog, `operation state restored`},
+				{secondLog, `terminal operation restored`},
 			} {
 				if !logContains(t, entry.path, entry.text) {
 					t.Errorf("场景B日志缺少 %q\n日志尾部:\n%s", entry.text, tailFile(entry.path, 40))
