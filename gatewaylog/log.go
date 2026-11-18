@@ -3,6 +3,7 @@
 package gatewaylog
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -29,11 +30,58 @@ func ParseLevel(value string) slog.Level {
 // LevelFromEnv returns the LOG_LEVEL configured for the process.
 func LevelFromEnv() slog.Level { return ParseLevel(os.Getenv("LOG_LEVEL")) }
 
-// NewBaseHandler returns the shared JSON handler written to stderr. Every
-// service derives its own logger from it so all lines use the same format and
-// level filter.
+// isJSONFormat reports whether LOG_FORMAT=json was requested. The default is
+// line-oriented text, which is what `docker logs` and a terminal read best.
+func isJSONFormat() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("LOG_FORMAT")), "json")
+}
+
+// linePrefixWriter writes prefix at the start of every line it forwards, so a
+// TextHandler's records begin with the service tag instead of burying it in
+// the message body.
+type linePrefixWriter struct {
+	writer io.Writer
+	prefix string
+}
+
+func (w *linePrefixWriter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	var buf bytes.Buffer
+	buf.Grow(len(p) + len(w.prefix)*2)
+	rest := p
+	for len(rest) > 0 {
+		newline := bytes.IndexByte(rest, '\n')
+		var line []byte
+		if newline < 0 {
+			line, rest = rest, nil
+		} else {
+			line, rest = rest[:newline+1], rest[newline+1:]
+		}
+		if len(bytes.TrimSpace(line)) > 0 {
+			buf.WriteString(w.prefix)
+		}
+		buf.Write(line)
+	}
+	written, err := w.writer.Write(buf.Bytes())
+	if err != nil {
+		return 0, err
+	}
+	if written < buf.Len() {
+		return 0, io.ErrShortWrite
+	}
+	return len(p), nil
+}
+
+// NewBaseHandler returns the level-filtered handler written to stderr. Text is
+// the default; LOG_FORMAT=json switches to structured JSON lines.
 func NewBaseHandler() slog.Handler {
-	return slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: LevelFromEnv()})
+	options := &slog.HandlerOptions{Level: LevelFromEnv()}
+	if isJSONFormat() {
+		return slog.NewJSONHandler(os.Stderr, options)
+	}
+	return slog.NewTextHandler(os.Stderr, options)
 }
 
 // PrefixHandler prepends "[name] " to every log message while keeping the
@@ -101,10 +149,24 @@ func (h *attrHandler) WithGroup(name string) slog.Handler {
 	return &attrHandler{Handler: h.Handler.WithGroup(name), key: h.key, value: h.value}
 }
 
-// NewServiceLogger builds a logger for one service name from the shared base
-// handler. Passing a nil handler uses the current default handler, which is
-// convenient for tests and standalone entry points.
-func NewServiceLogger(handler slog.Handler, name string) *slog.Logger {
+// NewServiceLogger returns a logger for one gateway service. Text output, the
+// default, starts every line with "[name] " so a single `docker logs` stream
+// can be filtered per service. LOG_FORMAT=json switches to structured records
+// that carry the tag inside msg plus a service attribute.
+func NewServiceLogger(name string) *slog.Logger {
+	options := &slog.HandlerOptions{Level: LevelFromEnv()}
+	if isJSONFormat() {
+		return slog.New(NewPrefixHandlerWithAttr(slog.NewJSONHandler(os.Stderr, options), name, "service"))
+	}
+	return slog.New(slog.NewTextHandler(
+		&linePrefixWriter{writer: os.Stderr, prefix: "[" + name + "] "},
+		options,
+	))
+}
+
+// NewServiceLoggerWithHandler derives a service logger from a caller-supplied
+// handler, which is how tests capture output.
+func NewServiceLoggerWithHandler(handler slog.Handler, name string) *slog.Logger {
 	if handler == nil {
 		handler = NewBaseHandler()
 	}

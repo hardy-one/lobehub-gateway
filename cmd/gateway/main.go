@@ -56,7 +56,7 @@ func run() int {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(stop)
 
-	return runServices(newServices(configs, handler), bootLog, stop, configs.agent.ShutdownTimeout)
+	return runServices(newServices(configs), bootLog, stop, configs.agent.ShutdownTimeout)
 }
 
 func configsFromEnv() (gatewayConfigs, error) {
@@ -115,12 +115,12 @@ func configsFromEnv() (gatewayConfigs, error) {
 	}, nil
 }
 
-func newServices(configs gatewayConfigs, handler slog.Handler) []service {
-	agentLog := gatewaylog.NewServiceLogger(handler, "agent")
-	deviceLog := gatewaylog.NewServiceLogger(handler, "device")
-	asrLog := gatewaylog.NewServiceLogger(handler, "asr")
-	messageLog := gatewaylog.NewServiceLogger(handler, "message")
-	ossLog := gatewaylog.NewServiceLogger(handler, "oss")
+func newServices(configs gatewayConfigs) []service {
+	agentLog := gatewaylog.NewServiceLogger("agent")
+	deviceLog := gatewaylog.NewServiceLogger("device")
+	asrLog := gatewaylog.NewServiceLogger("asr")
+	messageLog := gatewaylog.NewServiceLogger("message")
+	ossLog := gatewaylog.NewServiceLogger("oss")
 	// The agent gateway owns the operation state store, so its listener alone
 	// is not the whole service: after the HTTP server stops accepting requests,
 	// Close must flush pending event counters and close SQLite. Without this

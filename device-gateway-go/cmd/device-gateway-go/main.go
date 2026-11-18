@@ -13,8 +13,8 @@ import (
 )
 
 func main() {
-	handler := gatewaylog.DefaultLevelLogger()
-	log := gatewaylog.NewServiceLogger(handler, "device")
+	gatewaylog.DefaultLevelLogger()
+	log := gatewaylog.NewServiceLogger("device")
 	cfg := gateway.ConfigFromEnv()
 	if err := cfg.Validate(); err != nil {
 		log.Error("invalid configuration", "error", err)
