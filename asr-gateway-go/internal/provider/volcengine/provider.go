@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -225,6 +226,15 @@ func (p *VolcengineProvider) Close() error {
 	return nil
 }
 
+// isExpectedStreamEnd reports whether a read error means the stream ended the
+// way a finished session does, rather than because the upstream failed.
+func isExpectedStreamEnd(err error) bool {
+	if errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) {
+		return true
+	}
+	return websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway)
+}
+
 func (p *VolcengineProvider) recvLoop() {
 	defer func() {
 		close(p.eventsCh)
@@ -240,7 +250,11 @@ func (p *VolcengineProvider) recvLoop() {
 
 		_, msg, err := p.conn.ReadMessage()
 		if err != nil {
-			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+			// A locally-initiated Close reaches this read as net.ErrClosed or
+			// io.EOF rather than as a WebSocket close frame, so filtering only
+			// close codes reported an ERROR on every normal session end and
+			// told the client the provider was unavailable and retryable.
+			if !isExpectedStreamEnd(err) {
 				select {
 				case p.errorsCh <- err:
 				default:
