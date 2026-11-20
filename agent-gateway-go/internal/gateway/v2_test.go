@@ -276,22 +276,41 @@ func TestMessagePatchIsV2Only(t *testing.T) {
 	wsExpectNoMessage(t, v1, 100*time.Millisecond)
 }
 
-func TestReplayReportsTrimmedGap(t *testing.T) {
+func TestReplayRetainsEventsByAge(t *testing.T) {
 	srv := NewServer(Config{ServiceToken: "service-token"}, nil)
 	op := srv.getOrCreateOperation("gap-op")
 	op.init("gap-op", "user-1", nil)
-	for i := 0; i < eventBufferMax+1; i++ {
+	const eventCount = 1500
+	for i := 0; i < eventCount; i++ {
 		op.pushEvent(agentStreamEvent{OperationID: "gap-op", Type: "step_complete"})
 	}
+	// More events than the old 1000-entry count cap: every event must still be
+	// replayable, with no gap. Count trimming used to silently drop the tail.
 	events, gap, status := op.collectReplay("1")
-	if !gap || len(events) != eventBufferTrim || status != StatusRunning {
-		t.Fatalf("unexpected replay gap result: events=%d gap=%v status=%s", len(events), gap, status)
+	if gap || len(events) != eventCount-1 || status != StatusRunning {
+		t.Fatalf("unexpected replay result: events=%d gap=%v status=%s", len(events), gap, status)
 	}
 	var first struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal(events[0], &first); err != nil || first.ID != "502" {
+	if err := json.Unmarshal(events[0], &first); err != nil || first.ID != "2" {
 		t.Fatalf("unexpected first replay event: id=%s err=%v", first.ID, err)
+	}
+}
+
+func TestReplayDropsBufferAfterInactivityTTL(t *testing.T) {
+	srv := NewServer(Config{ServiceToken: "service-token"}, nil)
+	op := srv.getOrCreateOperation("ttl-op")
+	op.init("ttl-op", "user-1", nil)
+	op.pushEvent(agentStreamEvent{OperationID: "ttl-op", Type: "step_complete"})
+	// Simulate the 2h inactivity TTL elapsing; collectReplay must drop the
+	// whole buffer and report a gap instead of replaying stale events.
+	op.mu.Lock()
+	op.eventBufferIdleAt = time.Now().Add(-eventBufferRetention - time.Second)
+	op.mu.Unlock()
+	events, gap, _ := op.collectReplay("0")
+	if len(events) != 0 || !gap {
+		t.Fatalf("expected empty buffer and gap after TTL: events=%d gap=%v", len(events), gap)
 	}
 }
 
@@ -457,10 +476,10 @@ func TestV2HubQueueOverflowDisconnectsSubscribers(t *testing.T) {
 	op := srv.getOperation("overflow")
 	op.mu.Lock()
 	op.hubDispatch = true
-	for i := 0; i <= eventBufferMax; i++ {
+	for i := 0; i <= hubQueueMax; i++ {
 		op.queueHubEventLocked(map[string]any{"id": strconv.Itoa(i + 1), "type": "status_change"})
 	}
-	if !op.hubOverflow || len(op.hubQueue) > eventBufferMax {
+	if !op.hubOverflow || len(op.hubQueue) > hubQueueMax {
 		t.Fatalf("hub queue was not bounded: overflow=%v len=%d", op.hubOverflow, len(op.hubQueue))
 	}
 	op.mu.Unlock()

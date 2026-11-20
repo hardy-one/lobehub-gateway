@@ -15,7 +15,11 @@ import (
 const (
 	defaultAuthTimeout      = 10 * time.Second
 	defaultHeartbeatTimeout = 90 * time.Second
-	defaultCleanupDelay     = 10 * time.Minute
+	// defaultCleanupDelay keeps a finished operation's in-memory state around
+	// long enough for a client that suspended it (e.g. a mobile app in the
+	// background) to reconnect and still observe the terminal status through
+	// replay. It matches eventBufferRetention and the upstream 2h stream TTL.
+	defaultCleanupDelay     = 2 * time.Hour
 	defaultIdleWatchdog     = 30 * time.Minute
 	defaultHeteroWatchdog   = 60 * time.Minute
 	defaultConfirmationWait = 60 * time.Second

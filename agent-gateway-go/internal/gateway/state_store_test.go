@@ -363,6 +363,36 @@ func TestStatusOfUnknownOperationDoesNotCreateOne(t *testing.T) {
 	}
 }
 
+func TestTerminalStatusSurvivesMemoryCleanup(t *testing.T) {
+	srv, httpSrv := testStateServer(t)
+	const opID = "op-cleanup-terminal"
+	postJSON(t, httpSrv.URL+"/api/operations/init", map[string]any{"operationId": opID, "userId": "user-1"}, http.StatusOK)
+	postJSON(t, httpSrv.URL+"/api/operations/update-status", map[string]any{
+		"operationId": opID, "status": "completed", "summary": "done",
+	}, http.StatusOK)
+	srv.stateStore.flush()
+
+	op := srv.getOperation(opID)
+	if op == nil {
+		t.Fatal("expected in-memory operation before cleanup")
+	}
+	// Simulate the in-memory object being reclaimed long after the client
+	// suspended the app. The terminal status must remain queryable.
+	op.cleanup()
+	srv.stateStore.flush()
+
+	if got := statusOf(t, httpSrv.URL, opID); got != string(StatusCompleted) {
+		t.Fatalf("terminal status lost after cleanup: got %q", got)
+	}
+	if srv.getOperation(opID) != nil {
+		t.Fatal("cleanup must remove the in-memory operation")
+	}
+	restored := srv.getOrCreateOperation(opID)
+	if restored.record.Status != StatusCompleted {
+		t.Fatalf("resubscribe restored status = %q, want completed", restored.record.Status)
+	}
+}
+
 func statusOf(t *testing.T, serverURL string, operationID string) string {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodGet, serverURL+"/api/operations/status?operationId="+operationID, nil)

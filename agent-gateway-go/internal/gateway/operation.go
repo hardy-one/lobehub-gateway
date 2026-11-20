@@ -16,8 +16,15 @@ import (
 )
 
 const (
-	eventBufferMax  = 1000
-	eventBufferTrim = 500
+	// hubQueueMax bounds a single subscriber's delivery queue. A subscriber
+	// that cannot keep up is forced to reconnect and replay from the event
+	// buffer; this is backpressure, not the replay buffer's retention policy.
+	hubQueueMax = 1000
+	// eventBufferRetention mirrors the upstream StreamEventManager's
+	// STREAM_RETENTION (2h inactivity TTL). The whole event stream is dropped
+	// once idle past this window instead of being trimmed by count: count
+	// trimming makes a reconnect silently lose earlier output.
+	eventBufferRetention = 2 * time.Hour
 )
 
 type queuedHubEvent struct {
@@ -39,24 +46,25 @@ type pendingInput struct {
 type operation struct {
 	server *Server
 
-	cleanupTimer *time.Timer
-	connections  map[*operationConnection]struct{}
-	eventBuffer  []bufferedEvent
-	eventCounter int
-	hubDispatch  bool
-	hubOverflow  bool
-	hubQueue     []queuedHubEvent
-	lastEventAt  time.Time
-	lastEventTyp string
-	mu           sync.RWMutex
-	pendingConf  map[string]pendingConfirmation
-	pendingInput map[string]pendingInput
-	record       operationRecord
-	watchdog     *time.Timer
-	openLLM      map[string]openLLMCall
-	startedAt    time.Time
-	startLogged  bool
-	finishLogged bool
+	cleanupTimer      *time.Timer
+	connections       map[*operationConnection]struct{}
+	eventBuffer       []bufferedEvent
+	eventBufferIdleAt time.Time
+	eventCounter      int
+	hubDispatch       bool
+	hubOverflow       bool
+	hubQueue          []queuedHubEvent
+	lastEventAt       time.Time
+	lastEventTyp      string
+	mu                sync.RWMutex
+	pendingConf       map[string]pendingConfirmation
+	pendingInput      map[string]pendingInput
+	record            operationRecord
+	watchdog          *time.Timer
+	openLLM           map[string]openLLMCall
+	startedAt         time.Time
+	startLogged       bool
+	finishLogged      bool
 }
 
 func newOperation(server *Server, operationID string) *operation {
@@ -432,6 +440,7 @@ func (o *operation) collectReplay(lastEventID string) ([]json.RawMessage, bool, 
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.pruneLLMLocked()
+	o.pruneEventBufferLocked()
 	since := parseEventID(lastEventID)
 	payloads := make([]json.RawMessage, 0, len(o.eventBuffer))
 	for _, event := range o.eventBuffer {
@@ -479,7 +488,7 @@ func (o *operation) queueHubEventLocked(msg map[string]any) <-chan int {
 	if event, ok := msg["event"].(agentStreamEvent); ok {
 		isToolExecute = event.Type == "tool_execute"
 	}
-	if len(o.hubQueue) >= eventBufferMax {
+	if len(o.hubQueue) >= hubQueueMax {
 		// A subscriber that cannot keep up must reconnect and replay from the
 		// bounded operation buffer. Keeping an unbounded delivery queue here
 		// would let one stalled socket consume memory indefinitely.
@@ -526,12 +535,23 @@ func (o *operation) drainHubEvents() {
 	}
 }
 
+// pruneEventBufferLocked drops the whole replay buffer once it has been idle
+// past the upstream 2h inactivity TTL. Events are never trimmed by count: a
+// reconnect must not silently lose earlier output (see StreamEventManager.ts).
+func (o *operation) pruneEventBufferLocked() {
+	if len(o.eventBuffer) == 0 {
+		return
+	}
+	if o.eventBufferIdleAt.IsZero() || time.Since(o.eventBufferIdleAt) <= eventBufferRetention {
+		return
+	}
+	o.eventBuffer = nil
+}
+
 func (o *operation) bufferLocked(id string, msg map[string]any) {
 	payload, _ := json.Marshal(msg)
 	o.eventBuffer = append(o.eventBuffer, bufferedEvent{Data: payload, ID: id})
-	if len(o.eventBuffer) > eventBufferMax {
-		o.eventBuffer = append([]bufferedEvent(nil), o.eventBuffer[len(o.eventBuffer)-eventBufferTrim:]...)
-	}
+	o.eventBufferIdleAt = time.Now()
 }
 
 func (o *operation) authenticatedConnectionsLocked() []*operationConnection {
@@ -728,9 +748,11 @@ func (o *operation) cleanup() {
 	o.stopWatchdogLocked()
 	o.stopCleanupLocked()
 	operationID := o.record.OperationID
-	if o.server.stateStore != nil {
-		o.server.stateStore.remove(operationID)
-	}
+	// Keep the persisted terminal status. A client that suspended the app
+	// during a long run may resubscribe well after this in-memory object is
+	// reclaimed; handleStatus and getOrCreateOperation restore the terminal
+	// status from SQLite and end the run instead of leaving it spinning.
+	// The state store's 24h orphan TTL reclaims the row.
 	o.mu.Unlock()
 	o.server.notifyLifecycle(o, "gone", "")
 	for _, conn := range connections {

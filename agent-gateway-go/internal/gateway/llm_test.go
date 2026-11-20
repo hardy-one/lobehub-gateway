@@ -1,7 +1,6 @@
 package gateway
 
 import (
-	"encoding/json"
 	"net/http/httptest"
 	"net/url"
 	"testing"
@@ -105,13 +104,14 @@ func TestLLMReplayOpenCallsSurviveBufferTrim(t *testing.T) {
 		t.Fatal(result)
 	}
 	op := s.getOperation("llm")
-	// Trim the first attempt out of the normal replay ring.
-	for i := 0; i < eventBufferMax+1; i++ {
-		op.pushEvent(agentStreamEvent{Type: "step_complete", Data: json.RawMessage(`{}`)})
-	}
+	// An inactive replay buffer is dropped after the 2h TTL, but an open LLM
+	// call must still be replayed so the client can bind to its result.
+	op.mu.Lock()
+	op.eventBufferIdleAt = time.Now().Add(-eventBufferRetention - time.Second)
+	op.mu.Unlock()
 	events, gap, _ := op.collectReplay("0")
-	if !gap || llmPayload(events[0]).Data.CallID != "open" {
-		t.Fatal("open call lost during trim")
+	if !gap || len(events) == 0 || llmPayload(events[0]).Data.CallID != "open" {
+		t.Fatal("open call lost after buffer TTL drop")
 	}
 	postJSON(t, ts.URL+"/api/operations/llm-close", map[string]any{"operationId": "llm", "callId": "open"}, 200)
 	events, _, _ = op.collectReplay("0")
